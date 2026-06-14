@@ -37,13 +37,20 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
       }),
     )
 
+    // CHAI uses the user's own subscription accounts, not opencode's own
+    // gateway/subscription, so we don't surface those providers in the UI.
+    const HIDDEN_PROVIDERS = new Set(["opencode", "opencode-go"])
+
     const available = createMemo(() =>
-      providers.connected().flatMap((p) =>
-        Object.values(p.models).map((m) => ({
-          ...m,
-          provider: p,
-        })),
-      ),
+      providers
+        .connected()
+        .filter((p) => !HIDDEN_PROVIDERS.has(p.id))
+        .flatMap((p) =>
+          Object.values(p.models).map((m) => ({
+            ...m,
+            provider: p,
+          })),
+        ),
     )
 
     const release = createMemo(
