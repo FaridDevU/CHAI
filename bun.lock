@@ -419,6 +419,16 @@
         "why-is-node-running": "3.2.2",
       },
     },
+    "packages/orchestrator": {
+      "name": "@chai/orchestrator",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@tsconfig/bun": "catalog:",
+        "@types/bun": "catalog:",
+        "@typescript/native-preview": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
     "packages/plugin": {
       "name": "@opencode-ai/plugin",
       "version": "1.17.4",
@@ -904,6 +914,8 @@
     "@bufbuild/protobuf": ["@bufbuild/protobuf@2.12.0", "", {}, "sha512-B/XlCaFIP8LOwzo+bz5uFzATYokcwCKQcghqnlfwSmM5eX/qTkvDBnDPs+gXtX/RyjxJ4DRikECcPJbyALA8FA=="],
 
     "@bufbuild/protoplugin": ["@bufbuild/protoplugin@2.12.0", "", { "dependencies": { "@bufbuild/protobuf": "2.12.0", "@typescript/vfs": "^1.6.2", "typescript": "5.4.5" } }, "sha512-ORlDITp8AFUXzIhLRoMCG+ud+D3MPKWb5HQXBoskMMnjeyEjE1H1qLonVNPyOr8lkx3xSfYUo8a0dvOZJVAzow=="],
+
+    "@chai/orchestrator": ["@chai/orchestrator@workspace:packages/orchestrator"],
 
     "@clack/core": ["@clack/core@1.0.0-alpha.1", "", { "dependencies": { "picocolors": "^1.0.0", "sisteransi": "^1.0.5" } }, "sha512-rFbCU83JnN7l3W1nfgCqqme4ZZvTTgsiKQ6FM0l+r0P+o2eJpExcocBUWUIwnDzL76Aca9VhUdWmB2MbUv+Qyg=="],
 
