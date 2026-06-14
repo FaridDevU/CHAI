@@ -1,0 +1,428 @@
+import { Button } from "@opencode-ai/ui/button"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { Dialog } from "@opencode-ai/ui/dialog"
+import { TextField } from "@opencode-ai/ui/text-field"
+import { Icon } from "@opencode-ai/ui/icon"
+import { For, Show, createMemo } from "solid-js"
+import { createStore } from "solid-js/store"
+import { useNavigate } from "@solidjs/router"
+import { base64Encode } from "@opencode-ai/core/util/encode"
+import { getFilename } from "@opencode-ai/core/util/path"
+import { useGlobal } from "@/context/global"
+import { ServerConnection } from "@/context/server"
+import { useDirectoryPicker } from "@/components/directory-picker"
+import {
+  Accounts,
+  PERMISSIONS,
+  ROLES,
+  Teams,
+  providerLabel,
+  type RoleMode,
+  type TeamConfig,
+} from "@/state/agents"
+import { DialogAccounts } from "@/components/dialog-accounts"
+
+const STACKS = ["Web (frontend)", "API / Backend", "Full-stack", "Python", "Móvil", "Otro"]
+const COUNTS = ["1", "2", "3", "4", "Personalizado"]
+const ROLE_MODES: { id: RoleMode; label: string; hint: string }[] = [
+  { id: "manual", label: "Manual", hint: "Tú eliges el rol de cada agente." },
+  { id: "auto", label: "Automático", hint: "CHAI evalúa a los agentes y asigna roles." },
+  { id: "hybrid", label: "Híbrido", hint: "Tú fijas algunos roles y CHAI decide el resto." },
+]
+const STEPS = ["Detalles", "Equipo", "Roles", "Resumen"]
+const DEFAULT_PERMS = ["read_project", "edit_project"]
+
+export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
+  const dialog = useDialog()
+  const global = useGlobal()
+  const navigate = useNavigate()
+  const pickDirectory = useDirectoryPicker()
+
+  const [s, set] = createStore({
+    step: 0,
+    name: "",
+    directory: "",
+    stack: STACKS[0],
+    count: "2",
+    selected: [] as string[],
+    roleMode: "manual" as RoleMode,
+    roles: {} as Record<string, string>,
+    perms: {} as Record<string, string[]>,
+    visualTesting: true,
+    computerControl: "approval_required" as TeamConfig["computerControl"],
+  })
+
+  const accounts = createMemo(() => Accounts.list())
+  const selectedAccounts = createMemo(() => accounts().filter((a) => s.selected.includes(a.id)))
+
+  function openFolder() {
+    pickDirectory({
+      server: props.server,
+      title: "Elegir carpeta del proyecto",
+      multiple: false,
+      onSelect: (result) => {
+        const dir = Array.isArray(result) ? result[0] : result
+        if (!dir) return
+        set("directory", dir)
+        if (!s.name.trim()) set("name", getFilename(dir))
+      },
+    })
+  }
+
+  function toggleAgent(id: string) {
+    if (s.selected.includes(id)) {
+      set("selected", (xs) => xs.filter((x) => x !== id))
+    } else {
+      set("selected", (xs) => [...xs, id])
+      if (!s.perms[id]) set("perms", id, [...DEFAULT_PERMS])
+      if (!s.roles[id]) set("roles", id, ROLES[0])
+    }
+  }
+
+  function togglePerm(id: string, perm: string) {
+    const current = s.perms[id] ?? []
+    set("perms", id, current.includes(perm) ? current.filter((p) => p !== perm) : [...current, perm])
+  }
+
+  function openAccounts() {
+    dialog.show(() => <DialogAccounts />)
+  }
+
+  const canNext = createMemo(() => {
+    if (s.step === 0) return s.name.trim().length > 0 && s.directory.length > 0
+    if (s.step === 1) return s.selected.length > 0
+    if (s.step === 2) {
+      if (s.roleMode === "auto") return true
+      return selectedAccounts().every((a) => !!s.roles[a.id])
+    }
+    return true
+  })
+
+  function start() {
+    const cfg: TeamConfig = {
+      projectName: s.name.trim(),
+      directory: s.directory,
+      stack: s.stack,
+      roleMode: s.roleMode,
+      visualTesting: s.visualTesting,
+      computerControl: s.computerControl,
+      agents: selectedAccounts().map((a) => ({
+        accountId: a.id,
+        provider: a.provider,
+        account: a.label,
+        role: s.roleMode === "auto" ? "auto" : s.roles[a.id] ?? ROLES[0],
+        permissions: s.perms[a.id] ?? [...DEFAULT_PERMS],
+      })),
+    }
+    Teams.save(cfg)
+    const ctx = global.createServerCtx(props.server)
+    ctx.projects.open(s.directory)
+    ctx.projects.touch(s.directory)
+    dialog.close()
+    navigate(`/${base64Encode(s.directory)}/session`)
+  }
+
+  return (
+    <Dialog title="Nuevo proyecto" class="w-full max-w-[560px] mx-auto">
+      <div class="flex flex-col gap-5 p-6 pt-0">
+        {/* step indicator */}
+        <div class="flex items-center gap-2">
+          <For each={STEPS}>
+            {(label, i) => (
+              <div class="flex items-center gap-2">
+                <div
+                  classList={{
+                    "flex items-center gap-1.5 text-12-medium": true,
+                    "text-text-strong": i() === s.step,
+                    "text-text-weak": i() !== s.step,
+                  }}
+                >
+                  <span
+                    classList={{
+                      "flex items-center justify-center size-5 rounded-full text-11-medium": true,
+                      "bg-icon-strong-base text-white": i() <= s.step,
+                      "border border-border-weak-base": i() > s.step,
+                    }}
+                  >
+                    {i() + 1}
+                  </span>
+                  {label}
+                </div>
+                <Show when={i() < STEPS.length - 1}>
+                  <div class="w-4 h-px bg-border-weak-base" />
+                </Show>
+              </div>
+            )}
+          </For>
+        </div>
+
+        {/* STEP 0 — details */}
+        <Show when={s.step === 0}>
+          <div class="flex flex-col gap-4">
+            <TextField
+              autofocus
+              type="text"
+              label="Nombre del proyecto"
+              placeholder="Mi proyecto"
+              value={s.name}
+              onChange={(v) => set("name", v)}
+            />
+            <div class="flex flex-col gap-1.5">
+              <span class="text-12-medium text-text-weak">Carpeta del proyecto</span>
+              <button
+                type="button"
+                class="flex items-center justify-between rounded-md border border-border-weak-base px-3 py-2 text-13-regular hover:border-border-strong"
+                onClick={openFolder}
+              >
+                <span classList={{ "text-text-strong truncate": !!s.directory, "text-text-weak": !s.directory }}>
+                  {s.directory || "Elegir carpeta…"}
+                </span>
+                <Icon name="folder" />
+              </button>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <span class="text-12-medium text-text-weak">Stack / tipo de proyecto</span>
+              <div class="flex flex-wrap gap-1.5">
+                <For each={STACKS}>
+                  {(st) => (
+                    <button
+                      type="button"
+                      classList={{
+                        "px-3 py-1.5 rounded-md text-12-medium border transition-colors": true,
+                        "border-icon-strong-base text-text-strong": s.stack === st,
+                        "border-border-weak-base text-text-weak hover:border-border-strong": s.stack !== st,
+                      }}
+                      onClick={() => set("stack", st)}
+                    >
+                      {st}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </div>
+          </div>
+        </Show>
+
+        {/* STEP 1 — team */}
+        <Show when={s.step === 1}>
+          <div class="flex flex-col gap-4">
+            <div class="flex flex-col gap-1.5">
+              <span class="text-12-medium text-text-weak">¿Cuántos agentes quieres usar?</span>
+              <div class="flex flex-wrap gap-1.5">
+                <For each={COUNTS}>
+                  {(c) => (
+                    <button
+                      type="button"
+                      classList={{
+                        "px-3 py-1.5 rounded-md text-12-medium border transition-colors": true,
+                        "border-icon-strong-base text-text-strong": s.count === c,
+                        "border-border-weak-base text-text-weak hover:border-border-strong": s.count !== c,
+                      }}
+                      onClick={() => set("count", c)}
+                    >
+                      {c === "Personalizado" ? c : `${c} ${c === "1" ? "agente" : "agentes"}`}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </div>
+
+            <Show
+              when={accounts().length > 0}
+              fallback={
+                <div class="flex flex-col items-center gap-3 rounded-md border border-border-weak-base px-4 py-8 text-center">
+                  <div class="text-13-medium text-text-strong">No tienes agentes conectados</div>
+                  <div class="text-12-regular text-text-weak">Conecta al menos 2 agentes para formar un equipo.</div>
+                  <Button type="button" variant="primary" size="large" onClick={openAccounts}>
+                    <Icon name="plus" /> Conectar cuentas
+                  </Button>
+                </div>
+              }
+            >
+              <div class="flex flex-col gap-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="text-12-medium text-text-weak">Agentes disponibles</span>
+                  <button type="button" class="text-11-medium text-text-link hover:underline" onClick={openAccounts}>
+                    Gestionar cuentas
+                  </button>
+                </div>
+                <For each={accounts()}>
+                  {(acc) => (
+                    <button
+                      type="button"
+                      classList={{
+                        "flex items-center justify-between rounded-md border px-3 py-2 transition-colors": true,
+                        "border-icon-strong-base": s.selected.includes(acc.id),
+                        "border-border-weak-base hover:border-border-strong": !s.selected.includes(acc.id),
+                      }}
+                      onClick={() => toggleAgent(acc.id)}
+                    >
+                      <div class="flex flex-col text-left min-w-0">
+                        <span class="text-13-medium text-text-strong truncate">{acc.label}</span>
+                        <span class="text-11-regular text-text-weak">{providerLabel(acc.provider)}</span>
+                      </div>
+                      <Show when={s.selected.includes(acc.id)} fallback={<div class="size-4" />}>
+                        <Icon name="check" class="text-icon-strong-base" />
+                      </Show>
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
+        </Show>
+
+        {/* STEP 2 — roles & permissions */}
+        <Show when={s.step === 2}>
+          <div class="flex flex-col gap-4">
+            <div class="flex flex-col gap-1.5">
+              <span class="text-12-medium text-text-weak">Modo de roles</span>
+              <div class="flex flex-wrap gap-1.5">
+                <For each={ROLE_MODES}>
+                  {(m) => (
+                    <button
+                      type="button"
+                      classList={{
+                        "px-3 py-1.5 rounded-md text-12-medium border transition-colors": true,
+                        "border-icon-strong-base text-text-strong": s.roleMode === m.id,
+                        "border-border-weak-base text-text-weak hover:border-border-strong": s.roleMode !== m.id,
+                      }}
+                      onClick={() => set("roleMode", m.id)}
+                    >
+                      {m.label}
+                    </button>
+                  )}
+                </For>
+              </div>
+              <span class="text-11-regular text-text-weak">
+                {ROLE_MODES.find((m) => m.id === s.roleMode)?.hint}
+              </span>
+            </div>
+
+            <Show
+              when={s.roleMode !== "auto"}
+              fallback={
+                <div class="rounded-md border border-border-weak-base px-4 py-6 text-center text-12-regular text-text-weak">
+                  CHAI hará un onboarding de los agentes y asignará los roles automáticamente al iniciar el equipo.
+                </div>
+              }
+            >
+              <For each={selectedAccounts()}>
+                {(acc) => (
+                  <div class="flex flex-col gap-2 rounded-md border border-border-weak-base p-3">
+                    <span class="text-13-medium text-text-strong">{acc.label}</span>
+                    <div class="flex flex-col gap-1.5">
+                      <span class="text-11-medium text-text-weak">Rol</span>
+                      <select
+                        class="rounded-md border border-border-weak-base bg-transparent px-2 py-1.5 text-12-regular text-text-strong"
+                        value={s.roles[acc.id] ?? ROLES[0]}
+                        onChange={(e) => set("roles", acc.id, e.currentTarget.value)}
+                      >
+                        <For each={ROLES}>{(r) => <option value={r}>{r}</option>}</For>
+                      </select>
+                    </div>
+                    <div class="flex flex-col gap-1.5">
+                      <span class="text-11-medium text-text-weak">Permisos</span>
+                      <div class="flex flex-wrap gap-1.5">
+                        <For each={PERMISSIONS}>
+                          {(p) => (
+                            <button
+                              type="button"
+                              classList={{
+                                "px-2 py-1 rounded text-11-medium border transition-colors": true,
+                                "border-icon-strong-base text-text-strong": (s.perms[acc.id] ?? []).includes(p.id),
+                                "border-border-weak-base text-text-weak hover:border-border-strong": !(
+                                  s.perms[acc.id] ?? []
+                                ).includes(p.id),
+                              }}
+                              onClick={() => togglePerm(acc.id, p.id)}
+                            >
+                              {p.label}
+                            </button>
+                          )}
+                        </For>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </For>
+            </Show>
+          </div>
+        </Show>
+
+        {/* STEP 3 — summary */}
+        <Show when={s.step === 3}>
+          <div class="flex flex-col gap-4">
+            <div class="flex flex-col gap-1 rounded-md border border-border-weak-base p-3 text-12-regular">
+              <div class="flex justify-between">
+                <span class="text-text-weak">Proyecto</span>
+                <span class="text-text-strong">{s.name}</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-text-weak">Carpeta</span>
+                <span class="text-text-strong truncate max-w-[60%]">{s.directory}</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-text-weak">Stack</span>
+                <span class="text-text-strong">{s.stack}</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-text-weak">Modo de roles</span>
+                <span class="text-text-strong">{ROLE_MODES.find((m) => m.id === s.roleMode)?.label}</span>
+              </div>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <span class="text-12-medium text-text-weak">Equipo ({selectedAccounts().length})</span>
+              <For each={selectedAccounts()}>
+                {(acc) => (
+                  <div class="flex items-center justify-between rounded-md border border-border-weak-base px-3 py-2 text-12-regular">
+                    <span class="text-text-strong">{acc.label}</span>
+                    <span class="text-text-weak">{s.roleMode === "auto" ? "rol automático" : s.roles[acc.id]}</span>
+                  </div>
+                )}
+              </For>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-12-regular text-text-strong">Testing visual</span>
+              <button
+                type="button"
+                classList={{
+                  "px-3 py-1 rounded-md text-12-medium border": true,
+                  "border-icon-strong-base text-text-strong": s.visualTesting,
+                  "border-border-weak-base text-text-weak": !s.visualTesting,
+                }}
+                onClick={() => set("visualTesting", !s.visualTesting)}
+              >
+                {s.visualTesting ? "Activado" : "Desactivado"}
+              </button>
+            </div>
+          </div>
+        </Show>
+
+        {/* footer nav */}
+        <div class="flex justify-between gap-2 pt-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="large"
+            onClick={() => (s.step === 0 ? dialog.close() : set("step", s.step - 1))}
+          >
+            {s.step === 0 ? "Cancelar" : "Atrás"}
+          </Button>
+          <Show
+            when={s.step < STEPS.length - 1}
+            fallback={
+              <Button type="button" variant="primary" size="large" onClick={start} disabled={selectedAccounts().length === 0}>
+                Iniciar equipo
+              </Button>
+            }
+          >
+            <Button type="button" variant="primary" size="large" onClick={() => set("step", s.step + 1)} disabled={!canNext()}>
+              Siguiente
+            </Button>
+          </Show>
+        </div>
+      </div>
+    </Dialog>
+  )
+}

@@ -22,6 +22,7 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useDirectoryPicker } from "@/components/directory-picker"
 import { DialogSelectServer, useServerManagementController } from "@/components/dialog-select-server"
 import { DialogServerV2 } from "@/components/settings-v2/dialog-server-v2"
+import { DialogAccounts } from "@/components/dialog-accounts"
 import { ServerConnection, useServer } from "@/context/server"
 import { sessionHasOpenTab, useTabs } from "@/context/tabs"
 import { useServerSync } from "@/context/server-sync"
@@ -317,17 +318,8 @@ function HomeDesign() {
   }
 
   function chooseProject(conn: ServerConnection.Any) {
-    function resolve(result: string | string[] | null) {
-      addProjects(conn, homeProjectDirectories(result))
-    }
-
-    const server = global.createServerCtx(conn)
-
-    pickDirectory({
-      server: conn,
-      title: language.t("command.project.open"),
-      multiple: true,
-      onSelect: resolve,
+    void import("@/components/project-agent-setup").then((x) => {
+      dialog.show(() => <x.ProjectAgentSetup server={conn} />)
     })
   }
 
@@ -503,6 +495,14 @@ function HomeProjectColumn(props: {
         </For>
       </Show>
       <div class="mt-4 flex min-w-0 flex-col gap-1">
+        <button
+          type="button"
+          class={`${HOME_PROJECT_NAV_ROW} text-v2-text-text-faint [&>[data-slot=icon-svg]]:text-v2-icon-icon-muted`}
+          onClick={() => dialog.show(() => <DialogAccounts />)}
+        >
+          <IconV2 name="user" size="small" />
+          <span class={HOME_PROJECT_NAV_LABEL}>Cuentas</span>
+        </button>
         <button
           type="button"
           class={`${HOME_PROJECT_NAV_ROW} text-v2-text-text-faint [&>[data-slot=icon-svg]]:text-v2-icon-icon-muted`}
