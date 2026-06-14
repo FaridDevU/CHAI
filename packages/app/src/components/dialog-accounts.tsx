@@ -28,7 +28,7 @@ export function DialogAccounts() {
     return false
   }
 
-  function connect(account: { id: string; provider: string }) {
+  function connect(account: { id: string; provider: string; label: string }) {
     const opencodeId = OPENCODE_PROVIDER[account.provider]
     if (!providerKnown(opencodeId)) {
       showToast(`Conexión de ${providerLabel(account.provider)} todavía no disponible.`)
@@ -36,7 +36,9 @@ export function DialogAccounts() {
     }
     Accounts.setStatus(account.id, "pending")
     void import("@/components/dialog-connect-provider").then((x) => {
-      dialog.show(() => <x.DialogConnectProvider provider={opencodeId} />)
+      dialog.show(() => (
+        <x.DialogConnectProvider provider={opencodeId} accountKey={account.id} label={account.label} />
+      ))
     })
   }
 

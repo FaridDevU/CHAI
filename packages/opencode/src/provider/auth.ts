@@ -62,6 +62,10 @@ export type AuthorizeInput = Schema.Schema.Type<typeof AuthorizeInput>
 export const CallbackInput = Schema.Struct({
   method: Schema.Finite.annotate({ description: "Auth method index" }),
   code: Schema.optional(Schema.String).annotate({ description: "OAuth authorization code" }),
+  accountKey: Schema.optional(Schema.String).annotate({
+    description: "Stable account identifier; when set, the credential is stored as a separate account (multi-account)",
+  }),
+  label: Schema.optional(Schema.String).annotate({ description: "Human-friendly account label" }),
 })
 export type CallbackInput = Schema.Schema.Type<typeof CallbackInput>
 
@@ -200,8 +204,15 @@ export const layer: Layer.Layer<Service, never, Auth.Service | Plugin.Service> =
       )
       if (!result || result.type !== "success") return yield* new OauthCallbackFailed({})
 
+      // When the caller supplies an accountKey, store this as a distinct account
+      // (multiple accounts per provider) instead of replacing the existing one.
+      const persist = (info: Auth.Info) =>
+        input.accountKey
+          ? auth.add(input.providerID, { ...info, accountKey: input.accountKey, label: input.label })
+          : auth.set(input.providerID, info)
+
       if ("key" in result) {
-        yield* auth.set(input.providerID, {
+        yield* persist({
           type: "api",
           key: result.key,
           ...(result.metadata ? { metadata: result.metadata } : {}),
@@ -210,7 +221,7 @@ export const layer: Layer.Layer<Service, never, Auth.Service | Plugin.Service> =
 
       if ("refresh" in result) {
         const { type: _, provider: __, refresh, access, expires, ...extra } = result
-        yield* auth.set(input.providerID, {
+        yield* persist({
           type: "oauth",
           access,
           refresh,

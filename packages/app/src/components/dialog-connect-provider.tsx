@@ -17,7 +17,13 @@ import { useServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
 import { useProviders } from "@/hooks/use-providers"
 
-export function DialogConnectProvider(props: { provider: string }) {
+export function DialogConnectProvider(props: { provider: string; accountKey?: string; label?: string }) {
+  // Attach the CHAI account identity to the OAuth callback so the server stores
+  // this as a distinct account (multi-account) instead of replacing the existing
+  // credential. The cast preserves the extra fields at runtime; the server
+  // accepts them (SDK types are regenerated separately).
+  const withAccount = <T extends object>(payload: T): T =>
+    props.accountKey ? ({ ...payload, accountKey: props.accountKey, label: props.label } as T) : payload
   const dialog = useDialog()
   const serverSync = useServerSync()
   const serverSDK = useServerSDK()
@@ -481,11 +487,13 @@ export function DialogConnectProvider(props: { provider: string }) {
 
       setFormStore("error", undefined)
       const result = await serverSDK.client.provider.oauth
-        .callback({
-          providerID: props.provider,
-          method: store.methodIndex,
-          code,
-        })
+        .callback(
+          withAccount({
+            providerID: props.provider,
+            method: store.methodIndex,
+            code,
+          }),
+        )
         .then((value) => (value.error ? { ok: false as const, error: value.error } : { ok: true as const }))
         .catch((error) => ({ ok: false as const, error }))
       if (result.ok) {
@@ -534,10 +542,12 @@ export function DialogConnectProvider(props: { provider: string }) {
     onMount(() => {
       void (async () => {
         const result = await serverSDK.client.provider.oauth
-          .callback({
-            providerID: props.provider,
-            method: store.methodIndex,
-          })
+          .callback(
+            withAccount({
+              providerID: props.provider,
+              method: store.methodIndex,
+            }),
+          )
           .then((value) => (value.error ? { ok: false as const, error: value.error } : { ok: true as const }))
           .catch((error) => ({ ok: false as const, error }))
 
