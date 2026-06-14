@@ -36,7 +36,10 @@ export const DialogSettings: Component = () => {
                   </div>
                 </div>
 
-                <div class="flex flex-col gap-1.5">
+                {/* Server section (Servers / Providers / Models) hidden for now —
+                    CHAI does not surface API-provider configuration yet. The panels
+                    and components below are kept so this can be re-enabled later. */}
+                {/* <div class="flex flex-col gap-1.5">
                   <TabsV2.SectionTitle>{language.t("settings.section.server")}</TabsV2.SectionTitle>
                   <div class="flex flex-col gap-1.5 w-full">
                     <TabsV2.Trigger value="servers">
@@ -52,7 +55,7 @@ export const DialogSettings: Component = () => {
                       {language.t("settings.models.title")}
                     </TabsV2.Trigger>
                   </div>
-                </div>
+                </div> */}
               </div>
             </div>
             <div class="settings-v2-nav-footer">
