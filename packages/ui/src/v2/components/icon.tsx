@@ -65,6 +65,14 @@ const icons = {
     viewBox: "0 0 16 16",
     body: `<path d="M2.5 7.5H3.5V8.5H2.5V7.5Z" stroke="currentColor"/><path d="M7.5 7.5H8.5V8.5H7.5V7.5Z" stroke="currentColor"/><path d="M12.5 7.5H13.5V8.5H12.5V7.5Z" stroke="currentColor"/>`,
   },
+  user: {
+    viewBox: "0 0 16 16",
+    body: `<path d="M8 8C9.65685 8 11 6.65685 11 5C11 3.34315 9.65685 2 8 2C6.34315 2 5 3.34315 5 5C5 6.65685 6.34315 8 8 8Z" stroke="currentColor"/><path d="M2.66667 14C2.66667 11.4227 5.05359 10 8 10C10.9464 10 13.3333 11.4227 13.3333 14" stroke="currentColor" stroke-linecap="square"/>`,
+  },
+  users: {
+    viewBox: "0 0 16 16",
+    body: `<path d="M6 7.66667C7.47276 7.66667 8.66667 6.47276 8.66667 5C8.66667 3.52724 7.47276 2.33333 6 2.33333C4.52724 2.33333 3.33333 3.52724 3.33333 5C3.33333 6.47276 4.52724 7.66667 6 7.66667Z" stroke="currentColor"/><path d="M1.33333 13.6667C1.33333 11.3655 3.42267 10 6 10C8.57733 10 10.6667 11.3655 10.6667 13.6667" stroke="currentColor" stroke-linecap="square"/><path d="M10.6667 7.33333C11.9553 7.33333 13 6.28867 13 5C13 3.71134 11.9553 2.66667 10.6667 2.66667M12 9.93333C13.6627 10.2247 14.6667 11.2487 14.6667 13" stroke="currentColor" stroke-linecap="square"/>`,
+  },
 }
 
 const spriteID = "opencode-v2-icon-sprite"
