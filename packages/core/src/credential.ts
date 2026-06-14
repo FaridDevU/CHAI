@@ -39,6 +39,9 @@ export class Stored extends Schema.Class<Stored>("Credential.Stored")({
   integrationID: IntegrationSchema.ID,
   label: Schema.String,
   value: Info,
+  /** Whether this is the credential used by default for its integration.
+   *  Only one credential per integration is active at a time. */
+  active: Schema.optional(Schema.Boolean),
 }) {}
 
 export interface Interface {
@@ -52,6 +55,19 @@ export interface Interface {
     readonly value: Info
     readonly label?: string
   }) => Effect.Effect<Stored>
+  /** Adds a credential WITHOUT removing existing ones for the integration, enabling
+   *  multiple accounts per provider. The first credential for an integration becomes
+   *  active; pass `active: true` to make a later one active (deactivating its siblings). */
+  readonly add: (input: {
+    readonly integrationID: IntegrationSchema.ID
+    readonly value: Info
+    readonly label?: string
+    readonly active?: boolean
+  }) => Effect.Effect<Stored>
+  /** Marks one credential active and deactivates the others in the same integration. */
+  readonly setActive: (id: ID) => Effect.Effect<void>
+  /** Returns the active credential for an integration (falls back to the first). */
+  readonly getActive: (integrationID: IntegrationSchema.ID) => Effect.Effect<Stored | undefined>
   /** Updates the label or secret value of a stored credential. */
   readonly update: (id: ID, updates: Partial<Pick<Stored, "label" | "value">>) => Effect.Effect<void>
   /** Removes a stored credential. */
@@ -72,6 +88,7 @@ export const layer = Layer.effect(
         integrationID: row.integration_id,
         label: row.label,
         value: decode(row.value),
+        active: row.active ?? undefined,
       })
     }
 
@@ -126,6 +143,77 @@ export const layer = Layer.effect(
           )
           .pipe(Effect.orDie)
         return credential
+      }),
+      add: Effect.fn("Credential.add")(function* (input) {
+        const siblings = yield* db
+          .select()
+          .from(CredentialTable)
+          .where(eq(CredentialTable.integration_id, input.integrationID))
+          .all()
+          .pipe(Effect.orDie)
+        const active = input.active ?? siblings.length === 0
+        const credential = new Stored({
+          id: ID.create(),
+          integrationID: input.integrationID,
+          label: input.label ?? "default",
+          value: input.value,
+          active,
+        })
+        yield* db
+          .transaction((tx) =>
+            Effect.gen(function* () {
+              if (active) {
+                yield* tx
+                  .update(CredentialTable)
+                  .set({ active: false })
+                  .where(eq(CredentialTable.integration_id, credential.integrationID))
+                  .run()
+              }
+              yield* tx
+                .insert(CredentialTable)
+                .values({
+                  id: credential.id,
+                  integration_id: credential.integrationID,
+                  label: credential.label,
+                  value: credential.value,
+                  active,
+                })
+                .run()
+            }),
+          )
+          .pipe(Effect.orDie)
+        return credential
+      }),
+      setActive: Effect.fn("Credential.setActive")(function* (id) {
+        const row = yield* db.select().from(CredentialTable).where(eq(CredentialTable.id, id)).all().pipe(Effect.orDie)
+        const target = row[0]
+        if (!target?.integration_id) return
+        yield* db
+          .transaction((tx) =>
+            Effect.gen(function* () {
+              yield* tx
+                .update(CredentialTable)
+                .set({ active: false })
+                .where(eq(CredentialTable.integration_id, target.integration_id!))
+                .run()
+              yield* tx.update(CredentialTable).set({ active: true }).where(eq(CredentialTable.id, id)).run()
+            }),
+          )
+          .pipe(Effect.orDie)
+      }),
+      getActive: Effect.fn("Credential.getActive")(function* (integrationID) {
+        const rows = yield* db
+          .select()
+          .from(CredentialTable)
+          .where(eq(CredentialTable.integration_id, integrationID))
+          .orderBy(asc(CredentialTable.time_created))
+          .all()
+          .pipe(Effect.orDie)
+        const mapped = rows.flatMap((row) => {
+          const credential = stored(row)
+          return credential ? [credential] : []
+        })
+        return mapped.find((c) => c.active) ?? mapped[0]
       }),
       update: Effect.fn("Credential.update")(function* (id, updates) {
         if (!updates.label && !updates.value) return

@@ -46,4 +46,42 @@ describe("Credential", () => {
       ),
     ),
   )
+
+  it.live("supports multiple accounts per integration with active selection", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          const credentials = yield* Credential.Service
+          const integrationID = Integration.ID.make("anthropic")
+
+          const first = yield* credentials.add({
+            integrationID,
+            label: "Claude 1",
+            value: new Credential.Key({ type: "key", key: "k1" }),
+          })
+          const second = yield* credentials.add({
+            integrationID,
+            label: "Claude 2",
+            value: new Credential.Key({ type: "key", key: "k2" }),
+          })
+
+          // add() keeps both, and the first added is active by default.
+          expect(yield* credentials.list(integrationID)).toHaveLength(2)
+          expect(first.active).toBe(true)
+          expect(second.active).toBe(false)
+          expect((yield* credentials.getActive(integrationID))?.id).toBe(first.id)
+
+          // setActive moves the active flag to the second and deactivates the first.
+          yield* credentials.setActive(second.id)
+          const after = yield* credentials.list(integrationID)
+          expect(after.find((c) => c.id === second.id)?.active).toBe(true)
+          expect(after.find((c) => c.id === first.id)?.active).toBe(false)
+          expect((yield* credentials.getActive(integrationID))?.id).toBe(second.id)
+        }).pipe(Effect.provide(layer(tmp.path))),
+      ),
+    ),
+  )
 })
