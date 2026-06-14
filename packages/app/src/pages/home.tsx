@@ -454,6 +454,9 @@ function HomeProjectColumn(props: {
   const controller = useServerManagementController({ navigateOnAdd: false })
   return (
     <aside class="flex min-w-0 flex-col lg:pt-[52px] mt-14 gap-4" aria-label={props.language.t("home.projects")}>
+      <div class="flex min-w-0 items-center pl-1.5">
+        <Logo class="h-14 w-auto" />
+      </div>
       <div class="flex h-7 min-w-0 items-center justify-between pl-1.5">
         <div class={HOME_SECTION_LABEL}>{props.language.t("home.projects")}</div>
         <Show when={global.servers.list().length === 1}>
