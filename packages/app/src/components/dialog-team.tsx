@@ -16,8 +16,28 @@ import { DialogAccounts } from "@/components/dialog-accounts"
 
 type AgentState = { label: string; tone: "ok" | "pending" | "off" }
 
+// A project session that backs one of the team's agents (created at "Iniciar equipo").
+export type SessionActivity = { id: string; title: string; updated: number }
+
 function permLabel(id: string) {
   return PERMISSIONS.find((p) => p.id === id)?.label ?? id
+}
+
+// The session title CHAI gives each agent when the team starts (see project-agent-setup).
+function agentSessionTitle(agent: TeamAgent) {
+  const role = agent.role === "auto" ? "Agente" : agent.role
+  return `${role} · ${agent.account}`
+}
+
+function relativeTime(ms: number): string {
+  const diff = Date.now() - ms
+  if (diff < 60_000) return "ahora mismo"
+  const min = Math.floor(diff / 60_000)
+  if (min < 60) return `hace ${min} min`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `hace ${h} h`
+  const d = Math.floor(h / 24)
+  return `hace ${d} d`
 }
 
 // Message types the inter-agent router will carry (for the legend / structure).
@@ -31,7 +51,7 @@ const MESSAGE_TYPES = [
   "revisión",
 ]
 
-export function DialogTeam(props: { directory?: string }) {
+export function DialogTeam(props: { directory?: string; sessions?: () => SessionActivity[] }) {
   const dialog = useDialog()
   const providers = useProviders()
   const [tab, setTab] = createSignal<"agents" | "comms">("agents")
@@ -41,6 +61,10 @@ export function DialogTeam(props: { directory?: string }) {
     props.directory ? Teams.get(props.directory) : teams()[0],
   )
   const connectedIds = createMemo(() => new Set(providers.connected().map((p) => p.id)))
+
+  const activity = createMemo(() => [...(props.sessions?.() ?? [])].sort((a, b) => b.updated - a.updated))
+  const sessionForAgent = (agent: TeamAgent) =>
+    activity().find((s) => s.title === agentSessionTitle(agent))
 
   function agentState(agent: TeamAgent): AgentState {
     const opencodeId = OPENCODE_PROVIDER[agent.provider]
@@ -139,6 +163,14 @@ export function DialogTeam(props: { directory?: string }) {
                             <span>{providerLabel(agent.provider)}</span>
                             <span>·</span>
                             <span>{agent.role === "auto" ? "rol automático" : agent.role}</span>
+                            <Show when={sessionForAgent(agent)}>
+                              {(s) => (
+                                <>
+                                  <span>·</span>
+                                  <span class="text-icon-success-base">sesión activa · {relativeTime(s().updated)}</span>
+                                </>
+                              )}
+                            </Show>
                           </div>
                           <div class="flex flex-wrap gap-1">
                             <For each={agent.permissions}>
@@ -162,13 +194,39 @@ export function DialogTeam(props: { directory?: string }) {
               {/* COMMS tab */}
               <Show when={tab() === "comms"}>
                 <div class="flex flex-col gap-3">
-                  <div class="rounded-md border border-border-weak-base px-4 py-8 text-center">
-                    <div class="text-13-medium text-text-strong">Comunicación entre agentes</div>
-                    <div class="text-12-regular text-text-weak mt-1">
-                      Aquí verás cómo la IA coordinadora se comunica con los demás agentes (quién → quién, vía CHAI) y
-                      sus respuestas, cuando el equipo trabaje.
+                  {/* Real activity feed: the project's agent sessions, most recent first. */}
+                  <div class="flex flex-col gap-1.5">
+                    <span class="text-11-medium text-text-weak">Actividad de los agentes</span>
+                    <Show
+                      when={activity().length > 0}
+                      fallback={
+                        <div class="rounded-md border border-border-weak-base px-4 py-8 text-center">
+                          <div class="text-13-medium text-text-strong">Todavía no hay actividad</div>
+                          <div class="text-12-regular text-text-weak mt-1">
+                            Inicia el equipo para abrir una sesión por agente. Aquí aparecerá su actividad.
+                          </div>
+                        </div>
+                      }
+                    >
+                      <div class="flex flex-col gap-1">
+                        <For each={activity()}>
+                          {(s) => (
+                            <div class="flex items-center justify-between rounded-md border border-border-weak-base px-3 py-2">
+                              <span class="text-12-regular text-text-strong truncate">{s.title}</span>
+                              <span class="text-11-regular text-text-weak shrink-0">{relativeTime(s.updated)}</span>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                  </div>
+
+                  <div class="rounded-md border border-border-weak-base px-4 py-3 text-center">
+                    <div class="text-12-regular text-text-weak">
+                      El flujo de mensajes IA→IA en vivo (quién → quién, vía CHAI) llegará con el orquestador.
                     </div>
                   </div>
+
                   <div class="flex flex-col gap-1.5">
                     <span class="text-11-medium text-text-weak">Tipos de mensaje del router</span>
                     <div class="flex flex-wrap gap-1.5">
