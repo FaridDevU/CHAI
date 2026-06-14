@@ -3,8 +3,19 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { Icon } from "@opencode-ai/ui/icon"
-import { For, Show, createSignal } from "solid-js"
+import { For, Show, createMemo, createSignal } from "solid-js"
 import { Accounts, PROVIDERS, providerLabel, type AccountStatus } from "@/state/agents"
+import { useProviders } from "@/hooks/use-providers"
+import { showToast } from "@/utils/toast"
+
+// Maps CHAI's provider buckets to the underlying opencode provider id used by the
+// real connect flow (OAuth / API key). Empty = no direct opencode mapping yet.
+const OPENCODE_PROVIDER: Record<string, string> = {
+  claude: "anthropic",
+  codex: "openai",
+  kimi: "moonshotai",
+  local: "",
+}
 
 function statusLabel(status: AccountStatus) {
   if (status === "ready") return "Listo"
@@ -14,9 +25,34 @@ function statusLabel(status: AccountStatus) {
 
 export function DialogAccounts() {
   const dialog = useDialog()
+  const providers = useProviders()
   const [adding, setAdding] = createSignal(false)
   const [provider, setProvider] = createSignal<string>(PROVIDERS[0].id)
   const [label, setLabel] = createSignal("")
+
+  const connectedIds = createMemo(() => new Set(providers.connected().map((p) => p.id)))
+  const providerKnown = (id: string) => {
+    if (!id) return false
+    for (const [pid] of providers.all()) if (pid === id) return true
+    return false
+  }
+
+  function connect(account: { id: string; provider: string }) {
+    const opencodeId = OPENCODE_PROVIDER[account.provider]
+    if (!providerKnown(opencodeId)) {
+      showToast(`Conexión de ${providerLabel(account.provider)} todavía no disponible.`)
+      return
+    }
+    Accounts.setStatus(account.id, "pending")
+    void import("@/components/dialog-connect-provider").then((x) => {
+      dialog.show(() => <x.DialogConnectProvider provider={opencodeId} />)
+    })
+  }
+
+  function isConnected(account: { provider: string }) {
+    const opencodeId = OPENCODE_PROVIDER[account.provider]
+    return !!opencodeId && connectedIds().has(opencodeId)
+  }
 
   function add() {
     const count = Accounts.list().filter((a) => a.provider === provider()).length
@@ -45,16 +81,23 @@ export function DialogAccounts() {
           >
             <For each={Accounts.list()}>
               {(acc) => (
-                <div class="flex items-center justify-between rounded-md border border-border-weak-base px-3 py-2">
+                <div class="flex items-center justify-between gap-2 rounded-md border border-border-weak-base px-3 py-2">
                   <div class="flex flex-col min-w-0">
                     <span class="text-13-medium text-text-strong truncate">{acc.label}</span>
                     <span class="text-11-regular text-text-weak">
-                      {providerLabel(acc.provider)} · {statusLabel(acc.status)}
+                      {providerLabel(acc.provider)} · {isConnected(acc) ? "Conectado" : statusLabel(acc.status)}
                     </span>
                   </div>
-                  <Button type="button" variant="ghost" size="small" onClick={() => Accounts.remove(acc.id)}>
-                    <Icon name="trash" />
-                  </Button>
+                  <div class="flex items-center gap-1 shrink-0">
+                    <Show when={!isConnected(acc)}>
+                      <Button type="button" variant="secondary" size="small" onClick={() => connect(acc)}>
+                        Conectar
+                      </Button>
+                    </Show>
+                    <Button type="button" variant="ghost" size="small" onClick={() => Accounts.remove(acc.id)}>
+                      <Icon name="trash" />
+                    </Button>
+                  </div>
                 </div>
               )}
             </For>
