@@ -58,6 +58,10 @@ type PlatformBase = {
   /** Open a native save file picker dialog (desktop only) */
   saveFilePickerDialog?(opts?: SaveFilePickerOptions): Promise<string | null>
 
+  /** Write a file inside a project directory, e.g. .chai/team.json (desktop only).
+   *  relativePath must stay within directory. Returns the absolute path written. */
+  writeProjectFile?(directory: string, relativePath: string, content: string): Promise<string>
+
   /** Storage mechanism, defaults to localStorage */
   storage?: (name?: string) => SyncStorage | AsyncStorage
 

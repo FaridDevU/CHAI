@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process"
-import { stat } from "node:fs/promises"
-import { basename } from "node:path"
+import { mkdir, stat, writeFile } from "node:fs/promises"
+import { basename, dirname, isAbsolute, join, relative } from "node:path"
 import { app, BrowserWindow, Notification, clipboard, dialog, ipcMain, shell } from "electron"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
@@ -160,6 +160,21 @@ export function registerIpcHandlers(deps: Deps) {
       })
       if (result.canceled) return null
       return result.filePath ?? null
+    },
+  )
+
+  // Write a file inside a project directory (CHAI: .chai/team.json and friends).
+  // relativePath is constrained to stay within directory to avoid path traversal.
+  ipcMain.handle(
+    "write-project-file",
+    async (_event: IpcMainInvokeEvent, directory: string, relativePath: string, content: string) => {
+      if (!directory || isAbsolute(relativePath)) throw new Error("Invalid project file path")
+      const target = join(directory, relativePath)
+      const rel = relative(directory, target)
+      if (rel.startsWith("..") || isAbsolute(rel)) throw new Error("Refusing to write outside project directory")
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, content, "utf8")
+      return target
     },
   )
 

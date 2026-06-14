@@ -89,6 +89,8 @@ const api: ElectronAPI = {
   readPickedFile: (token, path) => ipcRenderer.invoke("read-picked-file", token, path),
   releasePickedFiles: (token) => ipcRenderer.invoke("release-picked-files", token),
   saveFilePicker: (opts) => ipcRenderer.invoke("save-file-picker", opts),
+  writeProjectFile: (directory, relativePath, content) =>
+    ipcRenderer.invoke("write-project-file", directory, relativePath, content),
   openLink: (url) => ipcRenderer.send("open-link", url),
   openPath: (path, app) => ipcRenderer.invoke("open-path", path, app),
   readClipboardImage: () => ipcRenderer.invoke("read-clipboard-image"),

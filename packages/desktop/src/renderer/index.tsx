@@ -167,6 +167,10 @@ const createPlatform = (): Platform => {
       })
     },
 
+    writeProjectFile(directory, relativePath, content) {
+      return window.api.writeProjectFile(directory, relativePath, content)
+    },
+
     openLink(url: string) {
       window.api.openLink(url)
     },
