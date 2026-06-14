@@ -4,18 +4,9 @@ import { Dialog } from "@opencode-ai/ui/dialog"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { Icon } from "@opencode-ai/ui/icon"
 import { For, Show, createMemo, createSignal } from "solid-js"
-import { Accounts, PROVIDERS, providerLabel, type AccountStatus } from "@/state/agents"
+import { Accounts, OPENCODE_PROVIDER, PROVIDERS, providerLabel, type AccountStatus } from "@/state/agents"
 import { useProviders } from "@/hooks/use-providers"
 import { showToast } from "@/utils/toast"
-
-// Maps CHAI's provider buckets to the underlying opencode provider id used by the
-// real connect flow (OAuth / API key). Empty = no direct opencode mapping yet.
-const OPENCODE_PROVIDER: Record<string, string> = {
-  claude: "anthropic",
-  codex: "openai",
-  kimi: "moonshotai",
-  local: "",
-}
 
 function statusLabel(status: AccountStatus) {
   if (status === "ready") return "Listo"

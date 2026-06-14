@@ -24,6 +24,15 @@ export function providerLabel(id: string) {
   return PROVIDERS.find((p) => p.id === id)?.label ?? id
 }
 
+// Maps CHAI's provider buckets to the underlying opencode provider id used by the
+// real connect flow. Empty = no direct opencode mapping yet.
+export const OPENCODE_PROVIDER: Record<string, string> = {
+  claude: "anthropic",
+  codex: "openai",
+  kimi: "moonshotai",
+  local: "",
+}
+
 export const ROLES = [
   "Coordinador",
   "Arquitecto",
@@ -117,6 +126,14 @@ export const Teams = {
       return all[directory]
     } catch {
       return undefined
+    }
+  },
+  list: (): TeamConfig[] => {
+    try {
+      const all = JSON.parse(localStorage.getItem(TEAMS_KEY) || "{}")
+      return Object.values(all)
+    } catch {
+      return []
     }
   },
 }

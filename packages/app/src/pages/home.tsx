@@ -23,6 +23,7 @@ import { useDirectoryPicker } from "@/components/directory-picker"
 import { DialogSelectServer, useServerManagementController } from "@/components/dialog-select-server"
 import { DialogServerV2 } from "@/components/settings-v2/dialog-server-v2"
 import { DialogAccounts } from "@/components/dialog-accounts"
+import { DialogTeam } from "@/components/dialog-team"
 import { ServerConnection, useServer } from "@/context/server"
 import { sessionHasOpenTab, useTabs } from "@/context/tabs"
 import { useServerSync } from "@/context/server-sync"
@@ -495,6 +496,14 @@ function HomeProjectColumn(props: {
         </For>
       </Show>
       <div class="mt-4 flex min-w-0 flex-col gap-1">
+        <button
+          type="button"
+          class={`${HOME_PROJECT_NAV_ROW} text-v2-text-text-faint [&>[data-slot=icon-svg]]:text-v2-icon-icon-muted`}
+          onClick={() => dialog.show(() => <DialogTeam />)}
+        >
+          <IconV2 name="users" size="small" />
+          <span class={HOME_PROJECT_NAV_LABEL}>Equipo</span>
+        </button>
         <button
           type="button"
           class={`${HOME_PROJECT_NAV_ROW} text-v2-text-text-faint [&>[data-slot=icon-svg]]:text-v2-icon-icon-muted`}
