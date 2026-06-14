@@ -1,4 +1,5 @@
 import { ProviderAuth } from "@/provider/auth"
+import { Auth } from "@/auth"
 import { Config } from "@/config/config"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Provider } from "@/provider/provider"
@@ -36,6 +37,7 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
     const cfg = yield* Config.Service
     const provider = yield* Provider.Service
     const svc = yield* ProviderAuth.Service
+    const authSvc = yield* Auth.Service
 
     const list = Effect.fn("ProviderHttpApi.list")(function* () {
       const config = yield* cfg.get()
@@ -99,7 +101,31 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
           providerID: ctx.params.providerID,
           method: ctx.payload.method,
           code: ctx.payload.code,
+          accountKey: ctx.payload.accountKey,
+          label: ctx.payload.label,
         }),
+      )
+      return true
+    })
+
+    const activateAccount = Effect.fn("ProviderHttpApi.activateAccount")(function* (ctx: {
+      params: { providerID: ProviderV2.ID; accountKey: string }
+    }) {
+      const credential = yield* authSvc.getByKey(ctx.params.providerID, ctx.params.accountKey).pipe(
+        Effect.mapError(() => new ProviderAuthApiError({ name: "BadRequest", data: { providerID: ctx.params.providerID } })),
+      )
+      if (!credential) {
+        return yield* new ProviderAuthApiError({
+          name: "BadRequest",
+          data: {
+            providerID: ctx.params.providerID,
+            kind: "account_not_connected",
+            message: `Account ${ctx.params.accountKey} is not connected for ${ctx.params.providerID}`,
+          },
+        })
+      }
+      yield* authSvc.setActive(ctx.params.providerID, ctx.params.accountKey).pipe(
+        Effect.mapError(() => new ProviderAuthApiError({ name: "BadRequest", data: { providerID: ctx.params.providerID } })),
       )
       return true
     })
@@ -109,5 +135,6 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
       .handle("auth", auth)
       .handleRaw("authorize", authorizeRaw)
       .handle("callback", callback)
+      .handle("activateAccount", activateAccount)
   }),
 )

@@ -81,6 +81,18 @@ export const ProviderApi = HttpApi.make("provider")
             description: "Handle the OAuth callback from a provider after user authorization.",
           }),
         ),
+        HttpApiEndpoint.post("activateAccount", `${root}/:providerID/account/:accountKey/activate`, {
+          params: { providerID: ProviderV2.ID, accountKey: Schema.String },
+          query: WorkspaceRoutingQuery,
+          success: described(Schema.Boolean, "Provider account activated"),
+          error: ProviderAuthApiError,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "provider.account.activate",
+            summary: "Activate provider account",
+            description: "Make a stored multi-account credential active before a provider turn.",
+          }),
+        ),
       )
       .annotateMerge(
         OpenApi.annotations({
