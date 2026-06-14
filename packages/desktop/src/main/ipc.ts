@@ -1,11 +1,11 @@
-import { execFile } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { mkdir, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, relative } from "node:path"
 import { app, BrowserWindow, Notification, clipboard, dialog, ipcMain, shell } from "electron"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 
-import type { FatalRendererError, ServerReadyData, TitlebarTheme } from "../preload/types"
+import type { FatalRendererError, IsolatedSubscriptionLoginInput, ServerReadyData, TitlebarTheme } from "../preload/types"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { assertAttachmentBudget, createPickedFileAuthorizations } from "./attachment-picker"
 import { getStore } from "./store"
@@ -19,6 +19,77 @@ const pickerFilters = (ext?: string[]) => {
 }
 
 const pickedFiles = createPickedFileAuthorizations()
+
+function psQuote(value: string) {
+  return `'${value.replace(/'/g, "''")}'`
+}
+
+function subscriptionCommand(provider: IsolatedSubscriptionLoginInput["provider"]) {
+  if (provider === "claude") return "claude login"
+  if (provider === "codex") return "codex login"
+  throw new Error(`Unsupported subscription provider: ${provider}`)
+}
+
+function chaiRuntimeRoot() {
+  return join(app.getPath("userData"), "chai-runtimes")
+}
+
+function cleanRuntimeSegment(value: string) {
+  return value.trim().replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "account"
+}
+
+async function openIsolatedSubscriptionLogin(input: IsolatedSubscriptionLoginInput) {
+  if (input.provider !== "claude" && input.provider !== "codex") throw new Error("Unsupported provider")
+  if (!input.accountId) throw new Error("Missing account id")
+
+  const profilePath =
+    input.profilePath ?? join(chaiRuntimeRoot(), `${cleanRuntimeSegment(input.provider)}-${cleanRuntimeSegment(input.accountId)}`)
+  const homePath = input.homePath ?? join(profilePath, "home")
+  const configPath = input.configPath ?? join(profilePath, "config")
+  const tempPath = input.tempPath ?? join(profilePath, "tmp")
+  const env = {
+    ...(input.env ?? {}),
+    CHAI_ACCOUNT_ID: input.accountId,
+    CHAI_PROVIDER: input.provider,
+    CHAI_RUNTIME_HOME: profilePath,
+    HOME: homePath,
+    USERPROFILE: homePath,
+    APPDATA: join(homePath, "AppData", "Roaming"),
+    LOCALAPPDATA: join(homePath, "AppData", "Local"),
+    TMP: tempPath,
+    TEMP: tempPath,
+    ...(input.provider === "claude" ? { CLAUDE_CONFIG_DIR: join(configPath, "claude") } : {}),
+    ...(input.provider === "codex" ? { CODEX_HOME: join(configPath, "codex") } : {}),
+  }
+
+  await Promise.all([
+    mkdir(profilePath, { recursive: true }),
+    mkdir(homePath, { recursive: true }),
+    mkdir(configPath, { recursive: true }),
+    mkdir(tempPath, { recursive: true }),
+    mkdir(env.APPDATA, { recursive: true }),
+    mkdir(env.LOCALAPPDATA, { recursive: true }),
+  ])
+
+  const assignments = Object.entries(env)
+    .map(([key, value]) => `$env:${key} = ${psQuote(value)}`)
+    .join("; ")
+  const label = input.label || input.accountId
+  const command = [
+    assignments,
+    `Set-Location ${psQuote(profilePath)}`,
+    `Write-Host ${psQuote(`CHAI isolated ${input.provider} login: ${label}`)} -ForegroundColor Cyan`,
+    `Write-Host ${psQuote(`HOME: ${homePath}`)} -ForegroundColor DarkGray`,
+    subscriptionCommand(input.provider),
+  ].join("; ")
+
+  const child = spawn("powershell.exe", ["-NoExit", "-ExecutionPolicy", "Bypass", "-Command", command], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false,
+  })
+  child.unref()
+}
 
 type Deps = {
   killSidecar: () => Promise<void> | void
@@ -50,6 +121,7 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
     deps.setDefaultServerUrl(url),
   )
+  ipcMain.handle("get-chai-runtime-root", () => chaiRuntimeRoot())
   ipcMain.handle("get-display-backend", () => deps.getDisplayBackend())
   ipcMain.handle("set-display-backend", (_event: IpcMainInvokeEvent, backend: string | null) =>
     deps.setDisplayBackend(backend),
@@ -176,6 +248,11 @@ export function registerIpcHandlers(deps: Deps) {
       await writeFile(target, content, "utf8")
       return target
     },
+  )
+
+  ipcMain.handle(
+    "open-isolated-subscription-login",
+    (_event: IpcMainInvokeEvent, input: IsolatedSubscriptionLoginInput) => openIsolatedSubscriptionLogin(input),
   )
 
   ipcMain.on("open-link", (_event: IpcMainEvent, url: string) => {

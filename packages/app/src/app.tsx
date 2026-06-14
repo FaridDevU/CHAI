@@ -138,6 +138,17 @@ declare global {
     api?: {
       setTitlebar?: (theme: { mode: "light" | "dark" }) => Promise<void>
       exportDebugLogs?: () => Promise<string>
+      getChaiRuntimeRoot?: () => Promise<string>
+      openIsolatedSubscriptionLogin?: (input: {
+        provider: "claude" | "codex"
+        accountId: string
+        label?: string
+        profilePath?: string
+        homePath?: string
+        configPath?: string
+        tempPath?: string
+        env?: Record<string, string>
+      }) => Promise<void>
     }
   }
 }

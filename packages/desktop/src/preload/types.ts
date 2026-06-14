@@ -40,6 +40,17 @@ export type FatalRendererError = {
   os?: string
 }
 
+export type IsolatedSubscriptionLoginInput = {
+  provider: "claude" | "codex"
+  accountId: string
+  label?: string
+  profilePath?: string
+  homePath?: string
+  configPath?: string
+  tempPath?: string
+  env?: Record<string, string>
+}
+
 export type ElectronAPI = {
   killSidecar: () => Promise<void>
   installCli: () => Promise<string>
@@ -49,6 +60,7 @@ export type ElectronAPI = {
   consumeInitialDeepLinks: () => Promise<string[]>
   getDefaultServerUrl: () => Promise<string | null>
   setDefaultServerUrl: (url: string | null) => Promise<void>
+  getChaiRuntimeRoot: () => Promise<string>
   getDisplayBackend: () => Promise<LinuxDisplayBackend | null>
   setDisplayBackend: (backend: LinuxDisplayBackend | null) => Promise<void>
   parseMarkdownCommand: (markdown: string) => Promise<string>
@@ -82,6 +94,7 @@ export type ElectronAPI = {
   writeProjectFile: (directory: string, relativePath: string, content: string) => Promise<string>
   openLink: (url: string) => void
   openPath: (path: string, app?: string) => Promise<void>
+  openIsolatedSubscriptionLogin: (input: IsolatedSubscriptionLoginInput) => Promise<void>
   readClipboardImage: () => Promise<{ buffer: ArrayBuffer; width: number; height: number } | null>
   showNotification: (title: string, body?: string) => void
   getWindowFocused: () => Promise<boolean>
