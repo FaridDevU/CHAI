@@ -1,6 +1,7 @@
 import { Coordinator } from "./coordinator"
 import { MessageRouter } from "./router"
 import type { MessageHandler } from "./router"
+import { AccountRuntimeRegistry, type RuntimeProfileOptions } from "./runtime"
 import type { Message, OrchestratorAgent, Transport } from "./types"
 
 export interface TeamInput {
@@ -21,11 +22,16 @@ export class Orchestrator {
   readonly directory: string
   readonly projectName: string
 
-  constructor(team: TeamInput, opts?: { transport?: Transport }) {
+  constructor(team: TeamInput, opts?: { transport?: Transport; runtime?: Partial<RuntimeProfileOptions> }) {
     this.router = new MessageRouter()
-    this.coordinator = new Coordinator({ router: this.router, transport: opts?.transport })
     this.directory = team.directory
     this.projectName = team.projectName
+    const runtimeRoot = opts?.runtime?.root ?? `${team.directory}/.chai/runtimes`
+    this.coordinator = new Coordinator({
+      router: this.router,
+      transport: opts?.transport,
+      runtimes: new AccountRuntimeRegistry({ root: runtimeRoot, claudeIsolation: opts?.runtime?.claudeIsolation }),
+    })
     for (const agent of team.agents) this.coordinator.register(agent)
   }
 

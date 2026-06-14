@@ -1,4 +1,5 @@
 import { MessageRouter } from "./router"
+import { AccountRuntimeRegistry, AccountRuntimeUnsupportedError } from "./runtime"
 import {
   COORDINATOR,
   USER,
@@ -27,10 +28,12 @@ export class Coordinator {
   private agents = new Map<string, OrchestratorAgent>()
   private tasks = new Map<string, Task>()
   private transport?: Transport
+  private runtimes: AccountRuntimeRegistry
 
-  constructor(opts?: { router?: MessageRouter; transport?: Transport }) {
+  constructor(opts?: { router?: MessageRouter; transport?: Transport; runtimes?: AccountRuntimeRegistry }) {
     this.router = opts?.router ?? new MessageRouter()
     this.transport = opts?.transport
+    this.runtimes = opts?.runtimes ?? new AccountRuntimeRegistry({ root: ".chai/runtimes" })
   }
 
   setTransport(transport: Transport | undefined) {
@@ -113,9 +116,21 @@ export class Coordinator {
 
     if (!this.transport) return outgoing
 
+    const runtime = this.runtimes.resolve(agent)
+    if (!runtime.isolated) {
+      this.setStatus(agentId, "error")
+      return this.router.send({
+        from: agentId,
+        to: opts?.from ?? COORDINATOR,
+        type: "error",
+        text: new AccountRuntimeUnsupportedError(runtime).message,
+        data: { accountId: runtime.accountId, provider: runtime.provider, isolation: runtime.isolation },
+      })
+    }
+
     this.setStatus(agentId, "working")
     try {
-      const reply = await this.transport.deliver(agent, outgoing)
+      const reply = await this.runtimes.withLock(runtime, () => this.transport!.deliver(agent, outgoing, runtime))
       this.setStatus(agentId, "ready")
       if (!reply) return outgoing
       return this.router.send(reply)

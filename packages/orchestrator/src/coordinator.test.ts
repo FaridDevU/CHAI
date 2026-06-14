@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { Coordinator } from "./coordinator"
+import { AccountRuntimeRegistry } from "./runtime"
 import type { OrchestratorAgent, Transport } from "./types"
 
 function agent(over: Partial<OrchestratorAgent> = {}): OrchestratorAgent {
   return {
     id: "a1",
     provider: "claude",
+    accountId: "claude-1",
     account: "Claude 1",
     role: "Coordinador",
     permissions: ["read_project"],
@@ -43,11 +45,16 @@ describe("Coordinator", () => {
 
   test("dispatch relays the agent reply and toggles status via transport", async () => {
     const transport: Transport = {
-      async deliver(a, message) {
+      async deliver(a, message, runtime) {
+        expect(runtime.accountId).toBe("claude-1")
+        expect(runtime.isolation).toBe("home")
         return { from: a.id, to: message.from, type: "respuesta", text: `ok: ${message.text}` }
       },
     }
-    const c = new Coordinator({ transport })
+    const c = new Coordinator({
+      transport,
+      runtimes: new AccountRuntimeRegistry({ root: ".chai/runtimes" }),
+    })
     c.register(agent({ id: "a1" }))
 
     const reply = await c.dispatch("a1", "haz X")
@@ -64,11 +71,55 @@ describe("Coordinator", () => {
       },
     }
     const c = new Coordinator({ transport })
-    c.register(agent({ id: "a1" }))
+    c.register(agent({ id: "a1", provider: "codex", accountId: "codex-1" }))
 
     const reply = await c.dispatch("a1", "haz X")
     expect(reply?.type).toBe("error")
     expect(reply?.text).toBe("boom")
+    expect(c.get("a1")?.status).toBe("error")
+  })
+
+  test("dispatch locks the account runtime while transport is running", async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const transport: Transport = {
+      async deliver(a, message) {
+        await gate
+        return { from: a.id, to: message.from, type: "respuesta", text: "done" }
+      },
+    }
+    const c = new Coordinator({
+      transport,
+      runtimes: new AccountRuntimeRegistry({ root: ".chai/runtimes" }),
+    })
+    c.register(agent({ id: "a1", accountId: "claude-1" }))
+    c.register(agent({ id: "a2", accountId: "claude-1", account: "Claude 1 copy" }))
+
+    const first = c.dispatch("a1", "uno")
+    const second = await c.dispatch("a2", "dos")
+    expect(second?.type).toBe("error")
+    expect(second?.text).toContain("already running")
+    release()
+    await first
+  })
+
+  test("dispatch rejects Claude when isolation is explicitly unsupported", async () => {
+    const transport: Transport = {
+      async deliver() {
+        throw new Error("should not run")
+      },
+    }
+    const c = new Coordinator({
+      transport,
+      runtimes: new AccountRuntimeRegistry({ root: ".chai/runtimes", claudeIsolation: "unsupported" }),
+    })
+    c.register(agent({ id: "a1", provider: "claude", accountId: "claude-1" }))
+
+    const reply = await c.dispatch("a1", "haz X")
+    expect(reply?.type).toBe("error")
+    expect(reply?.text).toContain("Claude Code needs an isolated HOME")
     expect(c.get("a1")?.status).toBe("error")
   })
 

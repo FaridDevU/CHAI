@@ -34,12 +34,36 @@ export type ParticipantId = string
 export interface OrchestratorAgent {
   id: string
   provider: string
+  /** Stable CHAI account id. Multiple agents may share an account, but not concurrently. */
+  accountId: string
   account: string
   role: Role
   permissions: Permission[]
+  /** Isolated runtime used to launch this account without touching global CLI auth. */
+  runtime?: AccountRuntime
   /** Session this agent runs in, once the app has opened one for it. */
   sessionId?: string
   status: AgentStatus
+}
+
+export type RuntimeIsolation = "profile" | "home" | "os-user" | "wsl" | "container" | "unsupported"
+
+export interface AccountRuntime {
+  accountId: string
+  provider: string
+  /** Root folder for this account's isolated home/config/auth files. */
+  profilePath: string
+  /** Fake HOME/USERPROFILE for providers that keep extra state outside config dirs. */
+  homePath?: string
+  /** Provider-specific config directory, when supported by the CLI. */
+  configPath?: string
+  /** Working temp directory for this account. */
+  tempPath?: string
+  env: Record<string, string>
+  isolation: RuntimeIsolation
+  /** True when CHAI can safely run this account without the provider's global session. */
+  isolated: boolean
+  reason?: string
 }
 
 export type MessageType = "info" | "pregunta" | "respuesta" | "feedback" | "error" | "entrega" | "revisión"
@@ -76,5 +100,5 @@ export interface Task {
  * core stays transport-agnostic (and unit-testable with a fake transport).
  */
 export interface Transport {
-  deliver(agent: OrchestratorAgent, message: Message): Promise<MessageInput | void>
+  deliver(agent: OrchestratorAgent, message: Message, runtime: AccountRuntime): Promise<MessageInput | void>
 }
