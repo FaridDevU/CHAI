@@ -4,13 +4,14 @@ import { Dialog } from "@opencode-ai/ui/dialog"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { Icon } from "@opencode-ai/ui/icon"
 import { For, Show, createMemo, createSignal } from "solid-js"
+import { createAccountRuntime } from "@chai/orchestrator"
 import { Accounts, OPENCODE_PROVIDER, PROVIDERS, providerLabel, type AccountStatus } from "@/state/agents"
 import { useProviders } from "@/hooks/use-providers"
 import { showToast } from "@/utils/toast"
 
 function statusLabel(status: AccountStatus) {
   if (status === "ready") return "Listo"
-  if (status === "pending") return "Pendiente de conexión"
+  if (status === "pending") return "Pendiente de conexion"
   return "No configurado"
 }
 
@@ -28,21 +29,48 @@ export function DialogAccounts() {
     return false
   }
 
-  function connect(account: { id: string; provider: string; label: string }) {
+  async function connectSubscription(account: { id: string; provider: string; label: string }) {
+    if (account.provider !== "claude" && account.provider !== "codex") return false
+    const root = await window.api?.getChaiRuntimeRoot?.()
+    const openLogin = window.api?.openIsolatedSubscriptionLogin
+    if (!root || !openLogin) {
+      showToast("La ventana desktop necesita reabrirse para cargar el login aislado nuevo.")
+      return true
+    }
+
+    const runtime = createAccountRuntime({ accountId: account.id, provider: account.provider }, { root })
+    await openLogin({
+      provider: account.provider,
+      accountId: account.id,
+      label: account.label,
+      profilePath: runtime.profilePath,
+      homePath: runtime.homePath,
+      configPath: runtime.configPath,
+      tempPath: runtime.tempPath,
+      env: runtime.env,
+    })
+    Accounts.setStatus(account.id, "pending")
+    showToast(`Se abrio un login aislado para ${account.label}. Cuando termines, marca la cuenta como lista.`)
+    return true
+  }
+
+  async function connect(account: { id: string; provider: string; label: string }) {
+    if (await connectSubscription(account)) return
     const opencodeId = OPENCODE_PROVIDER[account.provider]
     if (!providerKnown(opencodeId)) {
-      showToast(`Conexión de ${providerLabel(account.provider)} todavía no disponible.`)
+      showToast(`Conexion de ${providerLabel(account.provider)} todavia no disponible.`)
       return
     }
     Accounts.setStatus(account.id, "pending")
     void import("@/components/dialog-connect-provider").then((x) => {
-      dialog.show(() => (
-        <x.DialogConnectProvider provider={opencodeId} accountKey={account.id} label={account.label} />
+      void dialog.show(() => (
+        <x.DialogConnectProvider provider={opencodeId} accountKey={account.id} label={account.label} subscriptionOnly />
       ))
     })
   }
 
   function isConnected(account: { provider: string }) {
+    if ("status" in account && account.status === "ready") return true
     const opencodeId = OPENCODE_PROVIDER[account.provider]
     return !!opencodeId && connectedIds().has(opencodeId)
   }
@@ -59,8 +87,7 @@ export function DialogAccounts() {
     <Dialog title="Cuentas / Agentes" class="w-full max-w-[520px] mx-auto">
       <div class="flex flex-col gap-5 p-6 pt-0">
         <p class="text-12-regular text-text-weak">
-          Conecta las cuentas de IA que usarás en tus proyectos. Puedes añadir varias cuentas del mismo proveedor (p.
-          ej. Claude 1, Claude 2).
+          Conecta las cuentas de IA que usaras en tus proyectos. Puedes anadir varias cuentas del mismo proveedor (p. ej. Claude 1, Claude 2).
         </p>
 
         <div class="flex flex-col gap-1.5">
@@ -68,7 +95,7 @@ export function DialogAccounts() {
             when={Accounts.list().length > 0}
             fallback={
               <div class="rounded-md border border-border-weak-base px-4 py-6 text-center text-12-regular text-text-weak">
-                Aún no tienes cuentas. Añade al menos una para empezar.
+                Aun no tienes cuentas. Anade al menos una para empezar.
               </div>
             }
           >
@@ -84,7 +111,12 @@ export function DialogAccounts() {
                   <div class="flex items-center gap-1 shrink-0">
                     <Show when={!isConnected(acc)}>
                       <Button type="button" variant="secondary" size="small" onClick={() => connect(acc)}>
-                        Conectar
+                        {acc.status === "pending" ? "Abrir login" : "Conectar"}
+                      </Button>
+                    </Show>
+                    <Show when={acc.status === "pending"}>
+                      <Button type="button" variant="secondary" size="small" onClick={() => Accounts.setStatus(acc.id, "ready")}>
+                        Listo
                       </Button>
                     </Show>
                     <Button type="button" variant="ghost" size="small" onClick={() => Accounts.remove(acc.id)}>
@@ -101,7 +133,7 @@ export function DialogAccounts() {
           when={adding()}
           fallback={
             <Button type="button" variant="secondary" size="large" onClick={() => setAdding(true)}>
-              <Icon name="plus" /> Añadir cuenta
+              <Icon name="plus" /> Anadir cuenta
             </Button>
           }
         >
@@ -139,7 +171,7 @@ export function DialogAccounts() {
                 Cancelar
               </Button>
               <Button type="button" variant="primary" size="large" onClick={add}>
-                Añadir
+                Anadir
               </Button>
             </div>
           </div>

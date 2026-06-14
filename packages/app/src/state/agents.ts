@@ -3,6 +3,7 @@
 // per-project team configuration. Real OAuth connection and the .chai/team.json
 // file write are wired later; for the MVP we persist to localStorage.
 import { createStore } from "solid-js/store"
+import type { AccountRuntime } from "@chai/orchestrator"
 
 export type AccountStatus = "ready" | "pending" | "unconfigured"
 
@@ -42,7 +43,7 @@ export const ROLES = [
   "Ejecutor / Tester visual",
   "Tester",
   "Reviewer",
-  "Documentación / Contexto",
+  "Documentacion / Contexto",
 ] as const
 
 export const PERMISSIONS = [
@@ -60,6 +61,7 @@ export type TeamAgent = {
   account: string
   role: string
   permissions: string[]
+  runtime?: AccountRuntime
 }
 
 export type RoleMode = "manual" | "auto" | "hybrid"

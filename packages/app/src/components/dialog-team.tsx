@@ -2,6 +2,7 @@ import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { For, Show, createMemo, createSignal } from "solid-js"
+import { Orchestrator, type Message } from "@chai/orchestrator"
 import {
   Accounts,
   OPENCODE_PROVIDER,
@@ -12,7 +13,9 @@ import {
   type TeamConfig,
 } from "@/state/agents"
 import { useProviders } from "@/hooks/use-providers"
+import { useServerSDK } from "@/context/server-sdk"
 import { DialogAccounts } from "@/components/dialog-accounts"
+import { createTeamTransport, toOrchestratorAgent } from "@/components/team-orchestrator"
 
 type AgentState = { label: string; tone: "ok" | "pending" | "off" }
 
@@ -54,7 +57,13 @@ const MESSAGE_TYPES = [
 export function DialogTeam(props: { directory?: string; sessions?: () => SessionActivity[] }) {
   const dialog = useDialog()
   const providers = useProviders()
+  const serverSDK = useServerSDK()
   const [tab, setTab] = createSignal<"agents" | "comms">("agents")
+  const [selectedAgentId, setSelectedAgentId] = createSignal("")
+  const [message, setMessage] = createSignal("")
+  const [sending, setSending] = createSignal(false)
+  const [createdSessions, setCreatedSessions] = createSignal<Record<string, string>>({})
+  const [comms, setComms] = createSignal<Message[]>([])
 
   const teams = createMemo(() => Teams.list())
   const team = createMemo<TeamConfig | undefined>(() =>
@@ -65,17 +74,82 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
   const activity = createMemo(() => [...(props.sessions?.() ?? [])].sort((a, b) => b.updated - a.updated))
   const sessionForAgent = (agent: TeamAgent) =>
     activity().find((s) => s.title === agentSessionTitle(agent))
+  const sessionIdForAgent = (agent: TeamAgent) => createdSessions()[agent.accountId] ?? sessionForAgent(agent)?.id
 
   function agentState(agent: TeamAgent): AgentState {
     const opencodeId = OPENCODE_PROVIDER[agent.provider]
     if (opencodeId && connectedIds().has(opencodeId)) return { label: "Listo", tone: "ok" }
     const acc = Accounts.byId(agent.accountId)
-    if (acc?.status === "pending") return { label: "Pendiente de conexión", tone: "pending" }
+    if (acc?.status === "pending") return { label: "Pendiente de conexion", tone: "pending" }
     return { label: "No configurado", tone: "off" }
   }
 
   function openAccounts() {
     dialog.show(() => <DialogAccounts />)
+  }
+
+  function runtimeLabel(agent: TeamAgent) {
+    if (!agent.runtime) return "runtime pendiente"
+    if (agent.runtime.isolated) return `${agent.runtime.isolation} · ${agent.runtime.profilePath}`
+    return `bloqueado · ${agent.runtime.reason}`
+  }
+
+  function modelForProvider(providerID: string) {
+    const defaults = providers.default() as Record<string, string | undefined>
+    const defaultModel = defaults[providerID]
+    if (defaultModel) return { providerID, modelID: defaultModel }
+    const modelID = Object.keys(providers.all().get(providerID)?.models ?? {})[0]
+    return modelID ? { providerID, modelID } : undefined
+  }
+
+  async function createSessionForAgent(agent: TeamAgent): Promise<string> {
+    const currentTeam = team()
+    if (!currentTeam) throw new Error("No hay equipo activo")
+    const result = await serverSDK.client.session.create({
+      directory: currentTeam.directory,
+      title: agentSessionTitle(agent),
+    } as Parameters<typeof serverSDK.client.session.create>[0])
+    const session = "data" in result ? result.data : result
+    if (!session?.id) throw new Error(`No se pudo crear la sesión de ${agent.account}`)
+    setCreatedSessions((current) => ({ ...current, [agent.accountId]: session.id }))
+    return session.id
+  }
+
+  async function sendToAgent() {
+    const currentTeam = team()
+    if (!currentTeam || sending()) return
+    const text = message().trim()
+    if (!text) return
+
+    const targetId = selectedAgentId() || currentTeam.agents[0]?.accountId
+    const target = currentTeam.agents.find((agent) => agent.accountId === targetId)
+    if (!target) return
+
+    setSelectedAgentId(target.accountId)
+    setSending(true)
+    try {
+      const transport = createTeamTransport({
+        serverSDK,
+        directory: currentTeam.directory,
+        sessionForAgent: sessionIdForAgent,
+        createSessionForAgent,
+        byAccountId: (accountId) => currentTeam.agents.find((agent) => agent.accountId === accountId),
+        modelForProvider,
+      })
+      const orchestrator = new Orchestrator(
+        {
+          projectName: currentTeam.projectName,
+          directory: currentTeam.directory,
+          agents: currentTeam.agents.map((agent, index) => toOrchestratorAgent(agent, index, sessionIdForAgent(agent))),
+        },
+        { transport },
+      )
+      await orchestrator.coordinator.dispatch(target.accountId, text, { from: "user", type: "pregunta" })
+      setComms((current) => [...current, ...orchestrator.messages()])
+      setMessage("")
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
@@ -162,12 +236,14 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                           <div class="flex items-center gap-2 text-11-regular text-text-weak">
                             <span>{providerLabel(agent.provider)}</span>
                             <span>·</span>
-                            <span>{agent.role === "auto" ? "rol automático" : agent.role}</span>
+                            <span>{agent.role === "auto" ? "rol automatico" : agent.role}</span>
+                            <span>-</span>
+                            <span class="truncate">{runtimeLabel(agent)}</span>
                             <Show when={sessionForAgent(agent)}>
                               {(s) => (
                                 <>
                                   <span>·</span>
-                                  <span class="text-icon-success-base">sesión activa · {relativeTime(s().updated)}</span>
+                                  <span class="text-icon-success-base">sesion activa · {relativeTime(s().updated)}</span>
                                 </>
                               )}
                             </Show>
@@ -194,6 +270,63 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
               {/* COMMS tab */}
               <Show when={tab() === "comms"}>
                 <div class="flex flex-col gap-3">
+                  <div class="flex flex-col gap-2 rounded-md border border-border-weak-base p-3">
+                    <div class="flex flex-col gap-1.5">
+                      <span class="text-11-medium text-text-weak">Enviar a agente</span>
+                      <select
+                        class="rounded-md border border-border-weak-base bg-transparent px-2 py-1.5 text-12-regular text-text-strong"
+                        value={selectedAgentId() || t().agents[0]?.accountId}
+                        onChange={(event) => setSelectedAgentId(event.currentTarget.value)}
+                      >
+                        <For each={t().agents}>
+                          {(agent) => (
+                            <option value={agent.accountId}>
+                              {agent.account} - {agent.role === "auto" ? "Agente" : agent.role}
+                            </option>
+                          )}
+                        </For>
+                      </select>
+                    </div>
+                    <textarea
+                      class="min-h-20 resize-y rounded-md border border-border-weak-base bg-transparent px-3 py-2 text-12-regular text-text-strong outline-none focus:border-border-strong"
+                      value={message()}
+                      onInput={(event) => setMessage(event.currentTarget.value)}
+                      placeholder="Mensaje para probar el router del equipo"
+                    />
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="text-11-regular text-text-weak">
+                        Usa la cuenta seleccionada, su runtime y su sesion del proyecto.
+                      </span>
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="small"
+                        onClick={sendToAgent}
+                        disabled={sending() || !message().trim()}
+                      >
+                        {sending() ? "Enviando..." : "Enviar"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <Show when={comms().length > 0}>
+                    <div class="flex flex-col gap-1.5">
+                      <span class="text-11-medium text-text-weak">Router CHAI</span>
+                      <div class="flex max-h-48 flex-col gap-1 overflow-auto rounded-md border border-border-weak-base p-2">
+                        <For each={comms()}>
+                          {(item) => (
+                            <div class="rounded border border-border-weak-base px-2 py-1.5">
+                              <div class="text-10-medium text-text-weak">
+                                {item.from} {"->"} {item.to} - {item.type}
+                              </div>
+                              <div class="text-12-regular text-text-strong whitespace-pre-wrap">{item.text}</div>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </div>
+                  </Show>
+
                   {/* Real activity feed: the project's agent sessions, most recent first. */}
                   <div class="flex flex-col gap-1.5">
                     <span class="text-11-medium text-text-weak">Actividad de los agentes</span>
@@ -201,9 +334,9 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                       when={activity().length > 0}
                       fallback={
                         <div class="rounded-md border border-border-weak-base px-4 py-8 text-center">
-                          <div class="text-13-medium text-text-strong">Todavía no hay actividad</div>
+                          <div class="text-13-medium text-text-strong">Todavia no hay actividad</div>
                           <div class="text-12-regular text-text-weak mt-1">
-                            Inicia el equipo para abrir una sesión por agente. Aquí aparecerá su actividad.
+                            Inicia el equipo para abrir una sesion por agente. Aqui aparecera su actividad.
                           </div>
                         </div>
                       }
@@ -219,12 +352,6 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                         </For>
                       </div>
                     </Show>
-                  </div>
-
-                  <div class="rounded-md border border-border-weak-base px-4 py-3 text-center">
-                    <div class="text-12-regular text-text-weak">
-                      El flujo de mensajes IA→IA en vivo (quién → quién, vía CHAI) llegará con el orquestador.
-                    </div>
                   </div>
 
                   <div class="flex flex-col gap-1.5">

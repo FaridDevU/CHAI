@@ -8,6 +8,7 @@ import { createStore } from "solid-js/store"
 import { useNavigate } from "@solidjs/router"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { getFilename } from "@opencode-ai/core/util/path"
+import { createAccountRuntime } from "@chai/orchestrator"
 import { useGlobal } from "@/context/global"
 import { usePlatform } from "@/context/platform"
 import { ServerConnection } from "@/context/server"
@@ -105,6 +106,7 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
   async function start() {
     if (starting()) return
     setStarting(true)
+    const runtimeRoot = (await window.api?.getChaiRuntimeRoot?.().catch(() => undefined)) ?? `${s.directory}/.chai/runtimes`
     const cfg: TeamConfig = {
       projectName: s.name.trim(),
       directory: s.directory,
@@ -118,6 +120,10 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
         account: a.label,
         role: s.roleMode === "auto" ? "auto" : s.roles[a.id] ?? ROLES[0],
         permissions: s.perms[a.id] ?? [...DEFAULT_PERMS],
+        runtime: createAccountRuntime(
+          { accountId: a.id, provider: a.provider },
+          { root: runtimeRoot },
+        ),
       })),
     }
     Teams.save(cfg)

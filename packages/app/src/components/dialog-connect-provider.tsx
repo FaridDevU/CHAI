@@ -9,7 +9,7 @@ import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
 import { Spinner } from "@opencode-ai/ui/spinner"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { showToast } from "@/utils/toast"
-import { createEffect, createMemo, createResource, Match, onCleanup, onMount, Switch } from "solid-js"
+import { createEffect, createMemo, createResource, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { Link } from "@/components/link"
 import { useServerSDK } from "@/context/server-sdk"
@@ -17,7 +17,12 @@ import { useServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
 import { useProviders } from "@/hooks/use-providers"
 
-export function DialogConnectProvider(props: { provider: string; accountKey?: string; label?: string }) {
+export function DialogConnectProvider(props: {
+  provider: string
+  accountKey?: string
+  label?: string
+  subscriptionOnly?: boolean
+}) {
   // Attach the CHAI account identity to the OAuth callback so the server stores
   // this as a distinct account (multi-account) instead of replacing the existing
   // credential. The cast preserves the extra fields at runtime; the server
@@ -49,12 +54,16 @@ export function DialogConnectProvider(props: { provider: string; accountKey?: st
   const provider = createMemo(
     () => providers.all().get(props.provider) ?? serverSync.data.provider.all.get(props.provider)!,
   )
-  const fallback = createMemo<ProviderAuthMethod[]>(() => [
-    {
-      type: "api" as const,
-      label: language.t("provider.connect.method.apiKey"),
-    },
-  ])
+  const fallback = createMemo<ProviderAuthMethod[]>(() =>
+    props.subscriptionOnly
+      ? []
+      : [
+          {
+            type: "api" as const,
+            label: language.t("provider.connect.method.apiKey"),
+          },
+        ],
+  )
   const [auth] = createResource(
     () => props.provider,
     async () => {
@@ -67,7 +76,11 @@ export function DialogConnectProvider(props: { provider: string; accountKey?: st
     },
   )
   const loading = createMemo(() => auth.loading && !serverSync.data.provider_auth[props.provider])
-  const methods = createMemo(() => auth.latest ?? serverSync.data.provider_auth[props.provider] ?? fallback())
+  const methods = createMemo(() => {
+    const value = auth.latest ?? serverSync.data.provider_auth[props.provider] ?? fallback()
+    if (!props.subscriptionOnly) return value
+    return value.filter((method) => method.type === "oauth")
+  })
   const [store, setStore] = createStore({
     methodIndex: undefined as undefined | number,
     authorization: undefined as undefined | ProviderAuthAuthorization,
@@ -155,6 +168,7 @@ export function DialogConnectProvider(props: { provider: string; accountKey?: st
     }
 
     const method = methods()[index]
+    if (!method) return
     dispatch({ type: "method.select", index })
 
     if (method.type === "oauth") {
@@ -420,6 +434,8 @@ export function DialogConnectProvider(props: { provider: string; accountKey?: st
         auth: {
           type: "api",
           key: apiKey,
+          ...(props.accountKey ? { accountKey: props.accountKey } : {}),
+          ...(props.label ? { label: props.label } : {}),
         },
       })
       await complete()
@@ -621,7 +637,16 @@ export function DialogConnectProvider(props: { provider: string; accountKey?: st
                 </div>
               </Match>
               <Match when={store.methodIndex === undefined}>
-                <MethodSelection />
+                <Show
+                  when={methods().length > 0}
+                  fallback={
+                    <div class="text-14-regular text-text-base">
+                      Este proveedor todavia no tiene un metodo de conexion disponible en CHAI.
+                    </div>
+                  }
+                >
+                  <MethodSelection />
+                </Show>
               </Match>
               <Match when={store.state === "pending"}>
                 <div class="text-14-regular text-text-base">

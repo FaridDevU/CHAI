@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "@kobalte/core": "catalog:",
+    "@chai/orchestrator": "workspace:*",
     "@opencode-ai/core": "workspace:*",
     "@opencode-ai/sdk": "workspace:*",
     "@opencode-ai/ui": "workspace:*",
