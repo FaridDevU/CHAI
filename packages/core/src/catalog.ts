@@ -212,7 +212,15 @@ export const layer = Layer.effect(
       }),
     })
     const active = Effect.fn("CatalogV2.active")(function* () {
-      return new Map((yield* credentials.all()).map((credential) => [credential.integrationID, credential]))
+      // With multiple credentials per integration, pick the one flagged active
+      // (falling back to the first). For a single credential this is unchanged.
+      const list = yield* credentials.all()
+      const out = new Map<(typeof list)[number]["integrationID"], (typeof list)[number]>()
+      for (const credential of list) {
+        const existing = out.get(credential.integrationID)
+        if (!existing || credential.active) out.set(credential.integrationID, credential)
+      }
+      return out
     })
 
     yield* events.subscribe(PluginV2.Event.Added).pipe(
