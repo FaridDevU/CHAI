@@ -74,4 +74,34 @@ describe("Auth", () => {
       expect(after["anthropic"]).toBeUndefined()
     }),
   )
+
+  it.instance("add stores multiple accounts per provider and keeps the first active", () =>
+    Effect.gen(function* () {
+      const auth = yield* Auth.Service
+      yield* auth.add("anthropic", { type: "api", key: "k1", accountKey: "claude-1", label: "Claude 1" })
+      yield* auth.add("anthropic", { type: "api", key: "k2", accountKey: "claude-2", label: "Claude 2" })
+
+      expect(yield* auth.list("anthropic")).toHaveLength(2)
+      // all() stays back-compat: one active (first) credential per provider.
+      const active = (yield* auth.all())["anthropic"]
+      expect(active?.type === "api" && active.key).toBe("k1")
+      const byKey = yield* auth.getByKey("anthropic", "claude-2")
+      expect(byKey?.type === "api" && byKey.key).toBe("k2")
+    }),
+  )
+
+  it.instance("add replaces the matching account and setActive promotes one", () =>
+    Effect.gen(function* () {
+      const auth = yield* Auth.Service
+      yield* auth.add("anthropic", { type: "api", key: "k1", accountKey: "claude-1" })
+      yield* auth.add("anthropic", { type: "api", key: "k2", accountKey: "claude-2" })
+      // re-adding the same accountKey updates in place, not appends.
+      yield* auth.add("anthropic", { type: "api", key: "k1b", accountKey: "claude-1" })
+      expect(yield* auth.list("anthropic")).toHaveLength(2)
+
+      yield* auth.setActive("anthropic", "claude-2")
+      const active = (yield* auth.all())["anthropic"]
+      expect(active?.type === "api" && active.key).toBe("k2")
+    }),
+  )
 })
