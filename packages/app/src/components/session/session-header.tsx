@@ -6,6 +6,7 @@ import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Keybind } from "@opencode-ai/ui/keybind"
 import { Spinner } from "@opencode-ai/ui/spinner"
 import { showToast } from "@/utils/toast"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js"
@@ -27,6 +28,8 @@ import { Persist, persisted } from "@/utils/persist"
 import { StatusPopover, StatusPopoverV2 } from "../status-popover"
 import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
+import { Teams } from "@/state/agents"
+import { DialogTeam, type SessionActivity } from "@/components/dialog-team"
 
 const OPEN_APPS = [
   "vscode",
@@ -140,9 +143,16 @@ export function SessionHeader() {
   const settings = useSettings()
   const sync = useSync()
   const terminal = useTerminal()
+  const dialog = useDialog()
   const { params, view } = useSessionLayout()
 
   const projectDirectory = createMemo(() => decode64(params.dir) ?? "")
+  const hasTeam = createMemo(() => !!Teams.get(projectDirectory()))
+  const teamSessions = (): SessionActivity[] =>
+    (sync.data.session ?? [])
+      .filter((s) => !s.parentID && !s.time?.archived)
+      .map((s) => ({ id: s.id, title: s.title, updated: s.time.updated ?? s.time.created }))
+  const openComms = () => dialog.show(() => <DialogTeam directory={projectDirectory()} sessions={teamSessions} />)
   const project = createMemo(() => {
     const directory = projectDirectory()
     if (!directory) return
@@ -238,6 +248,9 @@ export function SessionHeader() {
     reviewKeybind: command.keybind("review.toggle"),
     reviewOpened: view().reviewPanel.opened(),
     onReviewToggle: () => view().reviewPanel.toggle(),
+    teamVisible: hasTeam(),
+    teamLabel: "Comunicación del equipo",
+    onTeam: openComms,
   }))
 
   const selectApp = (app: OpenApp) => {
@@ -442,6 +455,18 @@ export function SessionHeader() {
                         <StatusPopover />
                       </Tooltip>
                     </Show>
+                    <Show when={hasTeam()}>
+                      <Tooltip placement="bottom" value="Comunicación del equipo">
+                        <Button
+                          variant="ghost"
+                          class="titlebar-icon w-8 h-6 p-0 box-border shrink-0"
+                          onClick={openComms}
+                          aria-label="Comunicación del equipo"
+                        >
+                          <IconV2 name="users" size="small" />
+                        </Button>
+                      </Tooltip>
+                    </Show>
                     <TooltipKeybind
                       title={language.t("command.terminal.toggle")}
                       keybind={command.keybind("terminal.toggle")}
@@ -520,6 +545,9 @@ type SessionHeaderV2ActionsState = {
   reviewKeybind: string
   reviewOpened: boolean
   onReviewToggle: () => void
+  teamVisible: boolean
+  teamLabel: string
+  onTeam: () => void
 }
 
 function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
@@ -528,6 +556,19 @@ function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
       <Show when={props.state.statusVisible}>
         <Tooltip placement="bottom" value={props.state.statusLabel}>
           <StatusPopoverV2 />
+        </Tooltip>
+      </Show>
+      <Show when={props.state.teamVisible}>
+        <Tooltip placement="bottom" value={props.state.teamLabel}>
+          <IconButtonV2
+            type="button"
+            variant="ghost-muted"
+            size="large"
+            class="!w-9 shrink-0"
+            onClick={props.state.onTeam}
+            aria-label={props.state.teamLabel}
+            icon={<IconV2 name="users" />}
+          />
         </Tooltip>
       </Show>
       <TooltipKeybind title={props.state.reviewLabel} keybind={props.state.reviewKeybind}>
