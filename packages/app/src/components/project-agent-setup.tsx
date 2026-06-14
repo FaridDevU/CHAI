@@ -3,14 +3,16 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { Icon } from "@opencode-ai/ui/icon"
-import { For, Show, createMemo } from "solid-js"
+import { For, Show, createMemo, createSignal } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useNavigate } from "@solidjs/router"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { useGlobal } from "@/context/global"
+import { usePlatform } from "@/context/platform"
 import { ServerConnection } from "@/context/server"
 import { useDirectoryPicker } from "@/components/directory-picker"
+import { showToast } from "@/utils/toast"
 import {
   Accounts,
   PERMISSIONS,
@@ -35,8 +37,10 @@ const DEFAULT_PERMS = ["read_project", "edit_project"]
 export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
   const dialog = useDialog()
   const global = useGlobal()
+  const platform = usePlatform()
   const navigate = useNavigate()
   const pickDirectory = useDirectoryPicker()
+  const [starting, setStarting] = createSignal(false)
 
   const [s, set] = createStore({
     step: 0,
@@ -98,7 +102,9 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
     return true
   })
 
-  function start() {
+  async function start() {
+    if (starting()) return
+    setStarting(true)
     const cfg: TeamConfig = {
       projectName: s.name.trim(),
       directory: s.directory,
@@ -115,9 +121,40 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
       })),
     }
     Teams.save(cfg)
+
     const ctx = global.createServerCtx(props.server)
+
+    // Persist the team config as a real file in the project so the orchestrator
+    // (and the user) can see it. Falls back silently on web where there's no fs.
+    try {
+      await platform.writeProjectFile?.(s.directory, ".chai/team.json", JSON.stringify(cfg, null, 2))
+    } catch (err) {
+      showToast({
+        title: "No se pudo escribir .chai/team.json",
+        description: err instanceof Error ? err.message : String(err),
+      })
+    }
+
+    // Spin up one session per agent so the team materializes as real sessions.
+    // Not autonomous yet — true per-account routing is the orchestrator's job.
+    try {
+      for (const agent of cfg.agents) {
+        const role = agent.role === "auto" ? "Agente" : agent.role
+        await ctx.sdk.client.session.create({
+          directory: s.directory,
+          title: `${role} · ${agent.account}`,
+        })
+      }
+    } catch (err) {
+      showToast({
+        title: "No se pudieron crear todas las sesiones del equipo",
+        description: err instanceof Error ? err.message : String(err),
+      })
+    }
+
     ctx.projects.open(s.directory)
     ctx.projects.touch(s.directory)
+    setStarting(false)
     dialog.close()
     navigate(`/${base64Encode(s.directory)}/session`)
   }
@@ -412,8 +449,14 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
           <Show
             when={s.step < STEPS.length - 1}
             fallback={
-              <Button type="button" variant="primary" size="large" onClick={start} disabled={selectedAccounts().length === 0}>
-                Iniciar equipo
+              <Button
+                type="button"
+                variant="primary"
+                size="large"
+                onClick={start}
+                disabled={selectedAccounts().length === 0 || starting()}
+              >
+                {starting() ? "Iniciando…" : "Iniciar equipo"}
               </Button>
             }
           >
