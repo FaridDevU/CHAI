@@ -1314,7 +1314,13 @@ export const layer = Layer.effect(
           [providerID: string]: CustomDiscoverModels
         } = {}
         const dep = {
-          auth: (id: string) => auth.get(id).pipe(Effect.orDie),
+          // CHAI: resolve an account-scoped provider id (e.g. "anthropic#claude-2")
+          // to that specific account's credential; plain ids keep using the active
+          // one, so behavior is unchanged for single-account providers.
+          auth: (id: string) => {
+            const { base, accountKey } = ProviderV2.parseProviderID(ProviderV2.ID.make(id))
+            return (accountKey ? auth.getByKey(base, accountKey) : auth.get(base)).pipe(Effect.orDie)
+          },
           config: () => config.get(),
           env: () => env.all(),
           get: (key: string) => env.get(key),
