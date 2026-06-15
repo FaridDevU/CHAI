@@ -45,13 +45,17 @@ export function createClaudeTransport(input: {
           : runtime.env.CLAUDE_CONFIG_DIR ?? runtime.configPath
       if (!configDir) throw new Error(`La cuenta ${teamAgent.account} no tiene un runtime aislado`)
 
+      // NOTE: spread permissions into a PLAIN array. teamAgent often comes from a
+      // Solid store, so its arrays are reactive proxies — passing one across the
+      // Electron IPC boundary throws "An object could not be cloned". Every other
+      // field here is a primitive string, so this keeps the whole spec cloneable.
       const spec: ClaudeAgentSpec = {
         cli: teamAgent.provider === "kimi" ? "kimi" : "claude",
         configDir,
         projectDir: input.directory,
         prompt: message.text,
         role: teamAgent.role === "auto" ? undefined : roleLabel(teamAgent.role),
-        permissions: teamAgent.permissions,
+        permissions: teamAgent.permissions ? [...teamAgent.permissions] : undefined,
         model: input.modelForAgent?.(teamAgent),
         resumeSessionId: input.sessionForAgent?.(teamAgent),
       }
