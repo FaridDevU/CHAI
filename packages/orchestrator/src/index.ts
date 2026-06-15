@@ -32,3 +32,20 @@ export type {
   ClaudePermissionMode,
 } from "./claude-runner"
 export { buildKimiInvocation, parseKimiStreamEvent, parseKimiStreamLine } from "./kimi-runner"
+export {
+  TEAM_ROLES,
+  TEAM_PERMISSIONS,
+  extractJsonBlock,
+  parseCoordinatorPlan,
+  parseTeamEnvelope,
+  coordinatorPlanInstructions,
+  teamProtocolInstructions,
+} from "./team-protocol"
+export type {
+  Priority,
+  PlannedTask,
+  CoordinatorPlan,
+  TeamAction,
+  TeamActionType,
+  TeamEnvelope,
+} from "./team-protocol"
