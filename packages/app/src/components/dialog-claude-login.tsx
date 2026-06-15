@@ -14,8 +14,11 @@ import type { LocalPTY } from "@/context/terminal"
 export function DialogClaudeLogin(props: { accountId: string; label: string; configDir: string; profileDir: string }) {
   return (
     <Dialog title={`Conectar Claude · ${props.label}`} class="w-full max-w-[720px] mx-auto">
-      {/* Scope a directory SDK to the runtime dir so the terminal can connect. */}
-      <SDKProvider directory={props.profileDir}>
+      {/* Route through the server's default instance (empty directory ->
+          process.cwd on the server), which is already running, instead of the
+          isolated runtime dir (an empty folder with no instance). The PTY still
+          runs claude in the runtime dir via its own cwd + CLAUDE_CONFIG_DIR. */}
+      <SDKProvider directory="">
         <ClaudeLoginInner {...props} />
       </SDKProvider>
     </Dialog>
