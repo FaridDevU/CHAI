@@ -35,8 +35,8 @@ describe("buildCodexInvocation", () => {
     expect(inv.args).toContain("--skip-git-repo-check")
     expect(inv.args[inv.args.indexOf("-C") + 1]).toBe("/work/proj")
     expect(inv.args[inv.args.indexOf("-m") + 1]).toBe("gpt-5-codex")
-    // non-dangerous agent -> never ask, workspace-write sandbox; prompt is last.
-    expect(inv.args).toContain("-a")
+    // exec is already non-interactive and rejects -a; only the sandbox is set.
+    expect(inv.args).not.toContain("-a")
     expect(inv.args[inv.args.indexOf("-s") + 1]).toBe("workspace-write")
     const prompt = inv.args[inv.args.length - 1]
     expect(prompt).toContain("Eres el agente Backend.")
@@ -58,7 +58,6 @@ describe("buildCodexInvocation", () => {
     })
     expect(inv.args).toContain("--dangerously-bypass-approvals-and-sandbox")
     expect(inv.args).not.toContain("-s")
-    expect(inv.args).not.toContain("-a")
   })
 
   test("resume passes the session id as the resume subcommand before the prompt", () => {

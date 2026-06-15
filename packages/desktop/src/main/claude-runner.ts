@@ -100,6 +100,11 @@ export function runClaudeAgent(
         cwd: inv.cwd,
         env,
         windowsHide: true,
+        // Close the child's stdin (NUL). The prompt is passed via argv; if stdin
+        // stays an open pipe, `codex exec` detects a non-TTY and blocks forever
+        // reading it ("Reading additional input from stdin..."). claude/kimi -p
+        // don't read stdin, so ignoring it is safe for all three.
+        stdio: ["ignore", "pipe", "pipe"],
       })
     } catch (err) {
       reject(err)

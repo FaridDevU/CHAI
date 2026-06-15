@@ -13,9 +13,11 @@
 // CLI facts (codex-cli 0.139, `codex exec --help`):
 // - headless: `codex exec --json <prompt>` (JSONL events to stdout, no TUI).
 // - working root: `-C <dir>`. model: `-m <model>`.
-// - permissions: `-a never` (no human approval) + `-s read-only|workspace-write|
-//   danger-full-access`; the full-access level is `--dangerously-bypass-approvals
-//   -and-sandbox`. No --append-system-prompt, so the role is folded into the prompt.
+// - permissions: `-s read-only|workspace-write|danger-full-access`; the full
+//   -access level is `--dangerously-bypass-approvals-and-sandbox`. `exec` never
+//   prompts (it rejects -a/--ask-for-approval). No --append-system-prompt, so
+//   the role is folded into the prompt. NOTE: `exec` reads stdin when it isn't a
+//   TTY, so the spawner MUST close the child's stdin or it blocks forever.
 // - run outside a git repo: `--skip-git-repo-check`.
 // - resume a thread: `codex exec [OPTS] resume <session_id> <prompt>`.
 // - data/identity dir override: CODEX_HOME (default ~/.codex).
@@ -48,13 +50,15 @@ export function buildCodexInvocation(spec: ClaudeAgentSpec, opts?: { command?: s
   const args = ["exec", "--json", "--skip-git-repo-check", "--color", "never", "-C", spec.projectDir]
   if (spec.model) args.push("-m", spec.model)
 
-  // Non-interactive: never block on an approval prompt. The sandbox bounds what
-  // the agent may touch; the dangerous full-access level skips both at once.
+  // `codex exec` is already non-interactive (it never prompts for approval), and
+  // it rejects -a/--ask-for-approval (that flag lives on the top-level command).
+  // So only the sandbox bounds what the agent may touch; the dangerous full
+  // -access level removes the sandbox entirely.
   const sandbox = mapPermissionsToCodexSandbox(spec.permissions)
   if (sandbox === "danger-full-access") {
     args.push("--dangerously-bypass-approvals-and-sandbox")
   } else {
-    args.push("-a", "never", "-s", sandbox)
+    args.push("-s", sandbox)
   }
 
   // Options precede the `resume` subcommand; the prompt is the trailing positional.
