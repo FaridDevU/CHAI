@@ -61,6 +61,38 @@ describe("AccountRuntimeRegistry", () => {
     expect(agent.runtime).toBe(first)
   })
 
+  test("gives two accounts of the same provider fully separate isolated runtimes", () => {
+    // The real multi-account case: two Claude (or Kimi/Codex) subscriptions side
+    // by side. Each must get its own profile/config dir so their logins never mix.
+    const a = createAccountRuntime({ accountId: "claude-1", provider: "claude" }, { root: "/runtimes" })
+    const b = createAccountRuntime({ accountId: "claude-2", provider: "claude" }, { root: "/runtimes" })
+    expect(a.isolated && b.isolated).toBe(true)
+    expect(a.profilePath).not.toBe(b.profilePath)
+    expect(a.env.CLAUDE_CONFIG_DIR).not.toBe(b.env.CLAUDE_CONFIG_DIR)
+    expect(a.env.HOME).not.toBe(b.env.HOME)
+  })
+
+  test("locks per account, so DIFFERENT accounts run concurrently", async () => {
+    const reg = new AccountRuntimeRegistry({ root: "/runtimes" })
+    const a = createAccountRuntime({ accountId: "claude-1", provider: "claude" }, { root: "/runtimes" })
+    const b = createAccountRuntime({ accountId: "claude-2", provider: "claude" }, { root: "/runtimes" })
+    let releaseA!: () => void
+    const gateA = new Promise<void>((resolve) => (releaseA = resolve))
+
+    const first = reg.withLock(a, async () => {
+      await gateA
+      return "a"
+    })
+    expect(reg.isBusy("claude-1")).toBe(true)
+    // Second account is independent — it must NOT be blocked by the first.
+    expect(reg.isBusy("claude-2")).toBe(false)
+    const second = await reg.withLock(b, async () => "b")
+    expect(second).toBe("b")
+
+    releaseA()
+    expect(await first).toBe("a")
+  })
+
   test("withLock serializes access and rejects concurrent use of one account", async () => {
     const reg = new AccountRuntimeRegistry({ root: "/runtimes" })
     const rt = createAccountRuntime({ accountId: "claude-1", provider: "claude" }, { root: "/runtimes" })
