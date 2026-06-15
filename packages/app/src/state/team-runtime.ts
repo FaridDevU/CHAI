@@ -52,6 +52,9 @@ export type ProjectTeamRuntimeDeps = {
 }
 
 const runtimes = new Map<string, ProjectTeamRuntime>()
+// Reactive version bumped when a runtime is created, so peekProjectTeamRuntime()
+// callers (e.g. the session header badge) recompute once a team starts running.
+const [runtimesVersion, bumpRuntimesVersion] = createSignal(0)
 const MESSAGES_JSONL = ".chai/messages.jsonl"
 const MESSAGES_LEGACY = ".chai/messages.json"
 const TASKS_FILE = ".chai/tasks.json"
@@ -187,6 +190,16 @@ type RoundEntry = {
   ok: boolean
 }
 
+/**
+ * Return the live runtime for a project if one was already created, WITHOUT
+ * needing its deps. Lets read-only surfaces (e.g. the session header) react to a
+ * running team's state/permission requests without constructing a full runtime.
+ */
+export function peekProjectTeamRuntime(directory: string | undefined): ProjectTeamRuntime | undefined {
+  runtimesVersion() // track creation so reactive callers recompute when a team starts
+  return directory ? runtimes.get(directory) : undefined
+}
+
 export function getProjectTeamRuntime(team: TeamConfig, deps: ProjectTeamRuntimeDeps) {
   const existing = runtimes.get(team.directory)
   if (existing) {
@@ -195,6 +208,7 @@ export function getProjectTeamRuntime(team: TeamConfig, deps: ProjectTeamRuntime
   }
   const runtime = new ProjectTeamRuntime(team, deps)
   runtimes.set(team.directory, runtime)
+  bumpRuntimesVersion((v) => v + 1)
   return runtime
 }
 

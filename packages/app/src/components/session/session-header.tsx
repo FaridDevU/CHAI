@@ -30,6 +30,7 @@ import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { Teams } from "@/state/agents"
 import { DialogTeam, type SessionActivity } from "@/components/dialog-team"
+import { peekProjectTeamRuntime } from "@/state/team-runtime"
 
 const OPEN_APPS = [
   "vscode",
@@ -159,6 +160,14 @@ export function SessionHeader() {
       .filter((s) => !s.parentID && !s.time?.archived)
       .map((s) => ({ id: s.id, title: s.title, updated: s.time.updated ?? s.time.created }))
   const openComms = () => dialog.show(() => <DialogTeam directory={projectDirectory()} sessions={teamSessions} />)
+  // Live team signals surfaced on the coordinator chat header: a dot when the
+  // team is running and the count of permission requests awaiting approval.
+  const teamRuntime = createMemo(() => peekProjectTeamRuntime(projectDirectory()))
+  const teamRunning = createMemo(() => {
+    const rt = teamRuntime()
+    return !!rt && rt.runState() !== "idle"
+  })
+  const teamPendingPermissions = createMemo(() => teamRuntime()?.permissionRequests().length ?? 0)
   const project = createMemo(() => {
     const directory = projectDirectory()
     if (!directory) return
@@ -462,14 +471,29 @@ export function SessionHeader() {
                       </Tooltip>
                     </Show>
                     <Show when={hasTeam()}>
-                      <Tooltip placement="bottom" value="Comunicación del equipo">
+                      <Tooltip
+                        placement="bottom"
+                        value={
+                          teamPendingPermissions() > 0
+                            ? `Comunicación del equipo · ${teamPendingPermissions()} permiso(s) por aprobar`
+                            : "Comunicación del equipo"
+                        }
+                      >
                         <Button
                           variant="ghost"
-                          class="titlebar-icon w-8 h-6 p-0 box-border shrink-0"
+                          class="titlebar-icon relative w-8 h-6 p-0 box-border shrink-0"
                           onClick={openComms}
                           aria-label="Comunicación del equipo"
                         >
                           <IconV2 name="users" size="small" />
+                          <Show when={teamPendingPermissions() > 0}>
+                            <span class="absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full bg-icon-strong-base text-[9px] leading-[14px] text-center text-surface-base">
+                              {teamPendingPermissions()}
+                            </span>
+                          </Show>
+                          <Show when={teamPendingPermissions() === 0 && teamRunning()}>
+                            <span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-icon-success-base" />
+                          </Show>
                         </Button>
                       </Tooltip>
                     </Show>
