@@ -8,18 +8,21 @@ import { createStore } from "solid-js/store"
 import { useNavigate } from "@solidjs/router"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { createAccountRuntime, type Role } from "@chai/orchestrator"
+import { accountProviderId, createAccountRuntime, type Role } from "@chai/orchestrator"
 import { useGlobal } from "@/context/global"
 import { usePlatform } from "@/context/platform"
 import { ServerConnection } from "@/context/server"
+import { useProviders } from "@/hooks/use-providers"
 import { useDirectoryPicker } from "@/components/directory-picker"
 import { showToast } from "@/utils/toast"
 import {
   Accounts,
+  OPENCODE_PROVIDER,
   PERMISSIONS,
   ROLES,
   Teams,
   agentSessionTitle,
+  isCliProvider,
   providerLabel,
   roleLabel,
   type RoleMode,
@@ -43,6 +46,7 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
   const platform = usePlatform()
   const navigate = useNavigate()
   const pickDirectory = useDirectoryPicker()
+  const providers = useProviders()
   const [starting, setStarting] = createSignal(false)
 
   const [s, set] = createStore({
@@ -61,6 +65,25 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
 
   const accounts = createMemo(() => Accounts.list())
   const selectedAccounts = createMemo(() => accounts().filter((a) => s.selected.includes(a.id)))
+  // How many agents the user picked ("Personalizado" = no limit).
+  const maxAgents = createMemo(() => (s.count === "Personalizado" ? Infinity : Number(s.count) || Infinity))
+
+  // Changing the count trims the current selection so it never exceeds the limit.
+  function setCount(c: string) {
+    set("count", c)
+    const max = c === "Personalizado" ? Infinity : Number(c) || Infinity
+    if (s.selected.length > max) set("selected", (xs) => xs.slice(0, max))
+  }
+
+  // Whether an account is actually connected (so the agent will run). Mirrors
+  // dialog-accounts: Claude/Kimi rely on the confirmed CLI-login status, other
+  // providers on their per-account provider being exposed by the server.
+  const connectedIds = createMemo(() => new Set(providers.connected().map((p) => p.id)))
+  function accountReady(acc: { id: string; provider: string }) {
+    if (isCliProvider(acc.provider)) return Accounts.byId(acc.id)?.status === "ready"
+    const base = OPENCODE_PROVIDER[acc.provider]
+    return !!base && connectedIds().has(accountProviderId(base, acc.id))
+  }
 
   function openFolder() {
     pickDirectory({
@@ -79,11 +102,18 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
   function toggleAgent(id: string) {
     if (s.selected.includes(id)) {
       set("selected", (xs) => xs.filter((x) => x !== id))
-    } else {
-      set("selected", (xs) => [...xs, id])
-      if (!s.perms[id]) set("perms", id, [...DEFAULT_PERMS])
-      if (!s.roles[id]) set("roles", id, ROLES[0].id)
+      return
     }
+    if (s.selected.length >= maxAgents()) {
+      showToast({
+        title: `Elegiste ${s.count} ${s.count === "1" ? "agente" : "agentes"}`,
+        description: "Sube el número de arriba o deselecciona uno para añadir otro.",
+      })
+      return
+    }
+    set("selected", (xs) => [...xs, id])
+    if (!s.perms[id]) set("perms", id, [...DEFAULT_PERMS])
+    if (!s.roles[id]) set("roles", id, ROLES[0].id)
   }
 
   function togglePerm(id: string, perm: string) {
@@ -205,6 +235,8 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
           </For>
         </div>
 
+        {/* step content (scrolls when it overflows; indicator + footer stay put) */}
+        <div class="flex flex-col gap-5 overflow-y-auto max-h-[58vh] pr-1 -mr-1">
         {/* STEP 0 — details */}
         <Show when={s.step === 0}>
           <div class="flex flex-col gap-4">
@@ -267,7 +299,7 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
                         "border-icon-strong-base text-text-strong": s.count === c,
                         "border-border-weak-base text-text-weak hover:border-border-strong": s.count !== c,
                       }}
-                      onClick={() => set("count", c)}
+                      onClick={() => setCount(c)}
                     >
                       {c === "Personalizado" ? c : `${c} ${c === "1" ? "agente" : "agentes"}`}
                     </button>
@@ -290,7 +322,9 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
             >
               <div class="flex flex-col gap-1.5">
                 <div class="flex items-center justify-between">
-                  <span class="text-12-medium text-text-weak">Agentes disponibles</span>
+                  <span class="text-12-medium text-text-weak">
+                    Agentes disponibles · {s.selected.length}/{s.count === "Personalizado" ? "∞" : s.count}
+                  </span>
                   <button type="button" class="text-11-medium text-text-link hover:underline" onClick={openAccounts}>
                     Gestionar cuentas
                   </button>
@@ -308,11 +342,23 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
                     >
                       <div class="flex flex-col text-left min-w-0">
                         <span class="text-13-medium text-text-strong truncate">{acc.label}</span>
-                        <span class="text-11-regular text-text-weak">{providerLabel(acc.provider)}</span>
+                        <span class="text-11-regular text-text-weak">
+                          {providerLabel(acc.provider)} · {accountReady(acc) ? "Conectado" : "Sin conectar"}
+                        </span>
                       </div>
-                      <Show when={s.selected.includes(acc.id)} fallback={<div class="size-4" />}>
-                        <Icon name="check" class="text-icon-strong-base" />
-                      </Show>
+                      <div class="flex items-center gap-2 shrink-0">
+                        <span
+                          classList={{
+                            "size-1.5 rounded-full": true,
+                            "bg-icon-strong-base": accountReady(acc),
+                            "bg-border-strong": !accountReady(acc),
+                          }}
+                          title={accountReady(acc) ? "Conectado" : "Sin conectar"}
+                        />
+                        <Show when={s.selected.includes(acc.id)} fallback={<div class="size-4" />}>
+                          <Icon name="check" class="text-icon-strong-base" />
+                        </Show>
+                      </div>
                     </button>
                   )}
                 </For>
@@ -445,8 +491,37 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
                 {s.visualTesting ? "Activado" : "Desactivado"}
               </button>
             </div>
+            <div class="flex items-center justify-between">
+              <span class="text-12-regular text-text-strong">Control del PC</span>
+              <button
+                type="button"
+                classList={{
+                  "px-3 py-1 rounded-md text-12-medium border": true,
+                  "border-icon-strong-base text-text-strong": s.computerControl !== "off",
+                  "border-border-weak-base text-text-weak": s.computerControl === "off",
+                }}
+                onClick={() =>
+                  set(
+                    "computerControl",
+                    s.computerControl === "off"
+                      ? "approval_required"
+                      : s.computerControl === "approval_required"
+                        ? "allowed"
+                        : "off",
+                  )
+                }
+              >
+                {s.computerControl === "off"
+                  ? "Desactivado"
+                  : s.computerControl === "approval_required"
+                    ? "Pide aprobación"
+                    : "Permitido"}
+              </button>
+            </div>
           </div>
         </Show>
+
+        </div>
 
         {/* footer nav */}
         <div class="flex justify-between gap-2 pt-1">
