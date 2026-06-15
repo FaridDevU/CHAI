@@ -123,6 +123,34 @@ it.instance(
   { config: { provider: { anthropic: { options: { apiKey: "config-api-key" } } } } },
 )
 
+it.instance("registers one provider per connected account (CHAI)", () =>
+  Effect.gen(function* () {
+    yield* setProcessEnv(
+      "OPENCODE_AUTH_CONTENT",
+      JSON.stringify({
+        anthropic: [
+          { type: "api", key: "k1", accountKey: "claude-1", label: "Claude 1" },
+          { type: "api", key: "k2", accountKey: "claude-2", label: "Claude 2" },
+        ],
+      }),
+    )
+
+    const providers = yield* list
+    const a1 = ProviderV2.accountProviderID(ProviderV2.ID.anthropic, "claude-1")
+    const a2 = ProviderV2.accountProviderID(ProviderV2.ID.anthropic, "claude-2")
+
+    // Each connected account becomes its own provider with its own credential.
+    expect(providers[a1]).toBeDefined()
+    expect(providers[a2]).toBeDefined()
+    expect(providers[a1].key).toBe("k1")
+    expect(providers[a2].key).toBe("k2")
+
+    // Models are scoped to the account id so the SDK/language caches key per account.
+    const model = Object.values(providers[a1].models)[0]
+    expect(model?.providerID).toBe(a1)
+  }),
+)
+
 it.instance(
   "disabled_providers excludes provider",
   Effect.gen(function* () {

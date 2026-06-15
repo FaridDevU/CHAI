@@ -1539,6 +1539,71 @@ export const layer = Layer.effect(
           }
         }
 
+        // CHAI: register one provider per connected account so several
+        // subscription accounts of the same provider can run in parallel, each
+        // as its own provider id ("base#accountKey") with its own credential.
+        // We clone the base catalog entry, then replay the credential/builder
+        // steps scoped to the account (dep.auth already resolves account ids).
+        const accountProviders: { id: ProviderV2.ID; base: ProviderV2.ID; accountKey: string }[] = []
+        for (const baseKey of Object.keys(database)) {
+          const base = ProviderV2.ID.make(baseKey)
+          if (ProviderV2.isAccountProviderID(base) || disabled.has(base)) continue
+          const creds = yield* auth.list(base).pipe(Effect.orDie)
+          for (const cred of creds) {
+            const accountKey = Auth.keyOf(cred)
+            if (!accountKey) continue
+            const id = ProviderV2.accountProviderID(base, accountKey)
+            if (database[id]) continue
+            const baseInfo = database[base]
+            database[id] = {
+              ...baseInfo,
+              id,
+              // Per-account models so the SDK/language caches key by account.
+              models: mapValues(baseInfo.models, (model) => ({
+                ...model,
+                api: { ...model.api },
+                providerID: id,
+              })),
+            }
+            accountProviders.push({ id, base, accountKey })
+          }
+        }
+
+        for (const ap of accountProviders) {
+          const cred = yield* auth.getByKey(ap.base, ap.accountKey).pipe(Effect.orDie)
+          if (!cred) continue
+
+          // API-key accounts: copy the account's key onto its provider.
+          if (cred.type === "api") mergeProvider(ap.id, { source: "api", key: cred.key })
+
+          // OAuth/subscription accounts: replay the base provider's plugin auth
+          // loader scoped to this account so its fetch/token are account-specific.
+          const authPlugin = plugins.find((p) => p.auth?.loader && ProviderV2.ID.make(p.auth.provider) === ap.base)
+          if (authPlugin?.auth?.loader) {
+            const options = yield* Effect.promise(() =>
+              authPlugin.auth!.loader!(
+                () => bridge.promise(auth.getByKey(ap.base, ap.accountKey).pipe(Effect.orDie)) as any,
+                toPublicInfo(database[ap.id]),
+              ),
+            )
+            const opts = options ?? {}
+            mergeProvider(ap.id, providers[ap.id] ? { options: opts } : { source: "custom", options: opts })
+          }
+
+          // Replay the base provider's custom builder for the account provider.
+          const fn = custom(dep)[ap.base]
+          if (fn) {
+            const result = yield* fn(database[ap.id])
+            if (result && (result.autoload || providers[ap.id])) {
+              if (result.getModel) modelLoaders[ap.id] = result.getModel
+              if (result.vars) varsLoaders[ap.id] = result.vars
+              if (result.discoverModels) discoveryLoaders[ap.id] = result.discoverModels
+              const opts = result.options ?? {}
+              mergeProvider(ap.id, providers[ap.id] ? { options: opts } : { source: "custom", options: opts })
+            }
+          }
+        }
+
         // load config - re-apply with updated data
         for (const [id, provider] of configProviders) {
           const providerID = ProviderV2.ID.make(id)
