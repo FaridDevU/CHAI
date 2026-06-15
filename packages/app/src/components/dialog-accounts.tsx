@@ -4,7 +4,7 @@ import { Dialog } from "@opencode-ai/ui/dialog"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { Icon } from "@opencode-ai/ui/icon"
 import { For, Show, createMemo, createSignal } from "solid-js"
-import { ProviderV2 } from "@opencode-ai/core/provider"
+import { accountProviderId } from "@chai/orchestrator"
 import { Accounts, OPENCODE_PROVIDER, PROVIDERS, providerLabel, type AccountStatus } from "@/state/agents"
 import { useProviders } from "@/hooks/use-providers"
 import { showToast } from "@/utils/toast"
@@ -48,16 +48,16 @@ export function DialogAccounts() {
   }
 
   // The account's dedicated provider id, e.g. "anthropic#<accountId>".
-  function accountProviderId(account: { id: string; provider: string }) {
+  function providerIdFor(account: { id: string; provider: string }) {
     const base = OPENCODE_PROVIDER[account.provider]
     if (!base) return undefined
-    return ProviderV2.accountProviderID(ProviderV2.ID.make(base), account.id)
+    return accountProviderId(base, account.id)
   }
 
   // Connected per account: the server only exposes this account's provider once
   // its own credential is stored, so two accounts connect independently.
   function isConnected(account: { id: string; provider: string }) {
-    const id = accountProviderId(account)
+    const id = providerIdFor(account)
     return !!id && connectedIds().has(id)
   }
 
