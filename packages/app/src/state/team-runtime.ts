@@ -675,9 +675,10 @@ export class ProjectTeamRuntime {
 
   /**
    * Dispatch one turn with a timeout, bounded retries and exponential backoff.
-   * On timeout the agent's active run is cancelled (so the runtime lock frees);
-   * on a non-CLI error the stored session is dropped so the retry opens a fresh
-   * one (session rehydration). Returns the reply, or a stamped error message.
+   * On timeout the agent's active run is cancelled (so the runtime lock frees).
+   * Retries REUSE the agent's session (we do not recreate it) to avoid spawning
+   * duplicate sessions on every transient error — a dead session is recovered
+   * via the manual "Reconectar" action. Returns the reply, or an error message.
    */
   private async dispatchWithPolicy(
     agentId: string,
@@ -692,7 +693,6 @@ export class ProjectTeamRuntime {
         const reply = await this.withTimeout(this.orchestrator.coordinator.dispatch(agentId, text, opts), this.policy.turnTimeoutMs)
         if (reply && reply.type === "error" && attempt < this.policy.maxRetries) {
           attempt++
-          this.clearSessionForRetry(agentId)
           await this.backoff(attempt)
           continue
         }
@@ -710,7 +710,6 @@ export class ProjectTeamRuntime {
           })
         }
         attempt++
-        this.clearSessionForRetry(agentId)
         await this.backoff(attempt)
       }
     }
@@ -749,16 +748,6 @@ export class ProjectTeamRuntime {
     if (sessionId) {
       await this.deps.serverSDK.client.session.abort({ sessionID: sessionId }).catch(() => undefined)
       this.activeSessionIds.delete(accountId)
-    }
-  }
-
-  private clearSessionForRetry(accountId: string) {
-    const agent = this.team.agents.find((a) => a.accountId === accountId)
-    if (!agent || isCliProvider(agent.provider)) return
-    if (this.sessionRecords[accountId]) {
-      const { [accountId]: _omit, ...rest } = this.sessionRecords
-      this.sessionRecords = rest
-      void this.persistSessions()
     }
   }
 
