@@ -17,3 +17,10 @@ export {
   parseProviderId,
   isAccountProviderId,
 } from "./provider-id"
+export {
+  buildClaudeInvocation,
+  mapPermissionsToClaude,
+  parseClaudeStreamEvent,
+  parseClaudeStreamLine,
+} from "./claude-runner"
+export type { ClaudeAgentSpec, ClaudeInvocation, ClaudeRunEvent, ClaudePermissionMode } from "./claude-runner"
