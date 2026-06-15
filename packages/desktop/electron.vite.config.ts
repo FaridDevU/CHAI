@@ -40,7 +40,9 @@ export default defineConfig({
       rollupOptions: {
         input: { index: "src/main/index.ts", sidecar: "src/main/sidecar.ts" },
       },
-      externalizeDeps: { include: [nodePtyPkg] },
+      // Bundle @chai/orchestrator (raw TS workspace pkg) into main; if left
+      // external, Node ESM can't resolve its extensionless relative imports.
+      externalizeDeps: { include: [nodePtyPkg], exclude: ["@chai/orchestrator"] },
     },
     plugins: [
       {
