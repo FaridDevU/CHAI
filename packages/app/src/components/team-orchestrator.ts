@@ -1,6 +1,6 @@
 import { Orchestrator, type MessageInput, type OrchestratorAgent, type Transport } from "@chai/orchestrator"
 import { Identifier } from "@/utils/id"
-import { OPENCODE_PROVIDER, type TeamAgent, type TeamConfig } from "@/state/agents"
+import { OPENCODE_PROVIDER, roleLabel, type TeamAgent, type TeamConfig } from "@/state/agents"
 import type { ServerSDK } from "@/context/server-sdk"
 
 export function toOrchestratorAgent(agent: TeamAgent, index: number, sessionId?: string): OrchestratorAgent {
@@ -9,7 +9,7 @@ export function toOrchestratorAgent(agent: TeamAgent, index: number, sessionId?:
     accountId: agent.accountId,
     provider: agent.provider,
     account: agent.account,
-    role: agent.role as OrchestratorAgent["role"],
+    role: agent.role,
     permissions: agent.permissions as OrchestratorAgent["permissions"],
     runtime: agent.runtime,
     sessionId,
@@ -55,7 +55,7 @@ export function createTeamTransport(input: {
       if (!model) throw new Error(`No hay modelo disponible para ${providerID}`)
 
       const sessionID = input.sessionForAgent(teamAgent) ?? (await input.createSessionForAgent(teamAgent))
-      const role = teamAgent.role === "auto" ? "Agente" : teamAgent.role
+      const role = teamAgent.role === "auto" ? "Agente" : roleLabel(teamAgent.role)
       const text = [
         `[CHAI -> ${teamAgent.account}]`,
         `Rol: ${role}`,

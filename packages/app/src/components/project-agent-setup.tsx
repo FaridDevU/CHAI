@@ -8,7 +8,7 @@ import { createStore } from "solid-js/store"
 import { useNavigate } from "@solidjs/router"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { createAccountRuntime } from "@chai/orchestrator"
+import { createAccountRuntime, type Role } from "@chai/orchestrator"
 import { useGlobal } from "@/context/global"
 import { usePlatform } from "@/context/platform"
 import { ServerConnection } from "@/context/server"
@@ -20,6 +20,7 @@ import {
   ROLES,
   Teams,
   providerLabel,
+  roleLabel,
   type RoleMode,
   type TeamConfig,
 } from "@/state/agents"
@@ -51,7 +52,7 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
     count: "2",
     selected: [] as string[],
     roleMode: "manual" as RoleMode,
-    roles: {} as Record<string, string>,
+    roles: {} as Record<string, Role>,
     perms: {} as Record<string, string[]>,
     visualTesting: true,
     computerControl: "approval_required" as TeamConfig["computerControl"],
@@ -80,7 +81,7 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
     } else {
       set("selected", (xs) => [...xs, id])
       if (!s.perms[id]) set("perms", id, [...DEFAULT_PERMS])
-      if (!s.roles[id]) set("roles", id, ROLES[0])
+      if (!s.roles[id]) set("roles", id, ROLES[0].id)
     }
   }
 
@@ -118,7 +119,7 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
         accountId: a.id,
         provider: a.provider,
         account: a.label,
-        role: s.roleMode === "auto" ? "auto" : s.roles[a.id] ?? ROLES[0],
+        role: s.roleMode === "auto" ? "auto" : s.roles[a.id] ?? ROLES[0].id,
         permissions: s.perms[a.id] ?? [...DEFAULT_PERMS],
         runtime: createAccountRuntime(
           { accountId: a.id, provider: a.provider },
@@ -358,10 +359,10 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
                       <span class="text-11-medium text-text-weak">Rol</span>
                       <select
                         class="rounded-md border border-border-weak-base bg-transparent px-2 py-1.5 text-12-regular text-text-strong"
-                        value={s.roles[acc.id] ?? ROLES[0]}
-                        onChange={(e) => set("roles", acc.id, e.currentTarget.value)}
+                        value={s.roles[acc.id] ?? ROLES[0].id}
+                        onChange={(e) => set("roles", acc.id, e.currentTarget.value as Role)}
                       >
-                        <For each={ROLES}>{(r) => <option value={r}>{r}</option>}</For>
+                        <For each={ROLES}>{(r) => <option value={r.id}>{r.label}</option>}</For>
                       </select>
                     </div>
                     <div class="flex flex-col gap-1.5">
@@ -420,7 +421,7 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
                 {(acc) => (
                   <div class="flex items-center justify-between rounded-md border border-border-weak-base px-3 py-2 text-12-regular">
                     <span class="text-text-strong">{acc.label}</span>
-                    <span class="text-text-weak">{s.roleMode === "auto" ? "rol automático" : s.roles[acc.id]}</span>
+                    <span class="text-text-weak">{s.roleMode === "auto" ? "rol automático" : roleLabel(s.roles[acc.id] ?? ROLES[0].id)}</span>
                   </div>
                 )}
               </For>

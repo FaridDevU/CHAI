@@ -1,16 +1,20 @@
 // Domain model for the CHAI multi-agent orchestrator.
 // Pure types — no opencode/SDK dependency so the engine stays portable and testable.
 
+// Stable role identifiers. These are logical keys, never shown to the user —
+// the app owns the (translatable) display labels. Keeping them here, decoupled
+// from any UI string, is what lets the coordinator be found by role even after
+// the labels are translated. "auto" means CHAI assigns the role at runtime.
 export type Role =
-  | "Coordinador"
-  | "Arquitecto"
-  | "Frontend / UI"
-  | "Backend"
-  | "Full-stack"
-  | "Ejecutor / Tester visual"
-  | "Tester"
-  | "Reviewer"
-  | "Documentación / Contexto"
+  | "coordinator"
+  | "architect"
+  | "frontend"
+  | "backend"
+  | "fullstack"
+  | "executor"
+  | "tester"
+  | "reviewer"
+  | "docs"
   | "auto"
 
 export type Permission =

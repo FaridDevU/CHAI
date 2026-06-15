@@ -9,6 +9,7 @@ import {
   PERMISSIONS,
   Teams,
   providerLabel,
+  roleLabel,
   type TeamAgent,
   type TeamConfig,
 } from "@/state/agents"
@@ -28,7 +29,8 @@ function permLabel(id: string) {
 
 // The session title CHAI gives each agent when the team starts (see project-agent-setup).
 function agentSessionTitle(agent: TeamAgent) {
-  const role = agent.role === "auto" ? "Agente" : agent.role
+  // Keep "Agente" for auto so titles of already-created sessions still match.
+  const role = agent.role === "auto" ? "Agente" : roleLabel(agent.role)
   return `${role} · ${agent.account}`
 }
 
@@ -236,7 +238,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                           <div class="flex items-center gap-2 text-11-regular text-text-weak">
                             <span>{providerLabel(agent.provider)}</span>
                             <span>·</span>
-                            <span>{agent.role === "auto" ? "rol automatico" : agent.role}</span>
+                            <span>{roleLabel(agent.role)}</span>
                             <span>-</span>
                             <span class="truncate">{runtimeLabel(agent)}</span>
                             <Show when={sessionForAgent(agent)}>
@@ -281,7 +283,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                         <For each={t().agents}>
                           {(agent) => (
                             <option value={agent.accountId}>
-                              {agent.account} - {agent.role === "auto" ? "Agente" : agent.role}
+                              {agent.account} - {roleLabel(agent.role)}
                             </option>
                           )}
                         </For>

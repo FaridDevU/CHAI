@@ -3,7 +3,7 @@
 // per-project team configuration. Real OAuth connection and the .chai/team.json
 // file write are wired later; for the MVP we persist to localStorage.
 import { createStore } from "solid-js/store"
-import type { AccountRuntime } from "@chai/orchestrator"
+import type { AccountRuntime, Role } from "@chai/orchestrator"
 
 export type AccountStatus = "ready" | "pending" | "unconfigured"
 
@@ -34,17 +34,24 @@ export const OPENCODE_PROVIDER: Record<string, string> = {
   local: "",
 }
 
-export const ROLES = [
-  "Coordinador",
-  "Arquitecto",
-  "Frontend / UI",
-  "Backend",
-  "Full-stack",
-  "Ejecutor / Tester visual",
-  "Tester",
-  "Reviewer",
-  "Documentacion / Contexto",
-] as const
+// Selectable roles. `id` is the stable logical key shared with the orchestrator
+// (never translated); `label` is the display string (translate this, not the id).
+export const ROLES: { id: Role; label: string }[] = [
+  { id: "coordinator", label: "Coordinador" },
+  { id: "architect", label: "Arquitecto" },
+  { id: "frontend", label: "Frontend / UI" },
+  { id: "backend", label: "Backend" },
+  { id: "fullstack", label: "Full-stack" },
+  { id: "executor", label: "Ejecutor / Tester visual" },
+  { id: "tester", label: "Tester" },
+  { id: "reviewer", label: "Reviewer" },
+  { id: "docs", label: "Documentación / Contexto" },
+]
+
+export function roleLabel(id: string) {
+  if (id === "auto") return "Rol automático"
+  return ROLES.find((r) => r.id === id)?.label ?? id
+}
 
 export const PERMISSIONS = [
   { id: "read_project", label: "Leer proyecto" },
@@ -59,7 +66,7 @@ export type TeamAgent = {
   accountId: string
   provider: string
   account: string
-  role: string
+  role: Role
   permissions: string[]
   runtime?: AccountRuntime
 }

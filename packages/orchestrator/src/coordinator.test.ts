@@ -9,7 +9,7 @@ function agent(over: Partial<OrchestratorAgent> = {}): OrchestratorAgent {
     provider: "claude",
     accountId: "claude-1",
     account: "Claude 1",
-    role: "Coordinador",
+    role: "coordinator",
     permissions: ["read_project"],
     status: "ready",
     ...over,
@@ -17,19 +17,19 @@ function agent(over: Partial<OrchestratorAgent> = {}): OrchestratorAgent {
 }
 
 describe("Coordinator", () => {
-  test("registers agents and picks the Coordinador as coordinator", () => {
+  test("registers agents and picks the coordinator by role", () => {
     const c = new Coordinator()
-    c.register(agent({ id: "a1", role: "Backend" }))
-    c.register(agent({ id: "a2", role: "Coordinador" }))
+    c.register(agent({ id: "a1", role: "backend" }))
+    c.register(agent({ id: "a2", role: "coordinator" }))
 
     expect(c.list()).toHaveLength(2)
     expect(c.coordinator()?.id).toBe("a2")
   })
 
-  test("falls back to the first agent when no Coordinador exists", () => {
+  test("falls back to the first agent when no coordinator exists", () => {
     const c = new Coordinator()
-    c.register(agent({ id: "a1", role: "Backend" }))
-    c.register(agent({ id: "a2", role: "Tester" }))
+    c.register(agent({ id: "a1", role: "backend" }))
+    c.register(agent({ id: "a2", role: "tester" }))
 
     expect(c.coordinator()?.id).toBe("a1")
   })

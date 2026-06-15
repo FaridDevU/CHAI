@@ -61,9 +61,9 @@ export class Coordinator {
     if (agent) agent.status = status
   }
 
-  /** The Coordinador-role agent, or the first registered agent as a fallback. */
+  /** The coordinator-role agent, or the first registered agent as a fallback. */
   coordinator(): OrchestratorAgent | undefined {
-    return this.list().find((a) => a.role === "Coordinador") ?? this.list()[0]
+    return this.list().find((a) => a.role === "coordinator") ?? this.list()[0]
   }
 
   createTask(input: { title: string; description?: string; assignedTo?: string }): Task {
