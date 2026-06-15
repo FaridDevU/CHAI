@@ -255,6 +255,17 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
     return team()?.agents.find((a) => a.accountId === id)?.account ?? id
   }
 
+  // Terminal colors per agent: Kimi morado, Codex celeste, Claude naranja.
+  function speakerColor(id: string): string {
+    if (id === "user") return "#9ca3af"
+    if (id === "coordinator") return "#34d399" // CHAI = verde
+    const provider = team()?.agents.find((a) => a.accountId === id)?.provider
+    if (provider === "kimi") return "#a855f7"
+    if (provider === "codex") return "#38bdf8"
+    if (provider === "claude") return "#fb923c"
+    return "#e5e7eb"
+  }
+
   function friendlyFromJson(text: string): string | undefined {
     const block =
       text.match(/```json\s*([\s\S]*?)```/i)?.[1] ?? text.match(/```\s*([\s\S]*?)```/)?.[1] ?? text
@@ -650,22 +661,26 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                     </div>
                   </div>
 
-                  {/* The live inter-agent conversation (onboarding = who takes each role) */}
+                  {/* The two IAs talking — a colored terminal (Kimi morado, Codex
+                      celeste, Claude naranja, CHAI verde) */}
                   <div class="flex flex-col gap-1.5">
                     <div class="flex items-center justify-between">
-                      <span class="text-11-medium text-text-weak">Conversación entre agentes</span>
+                      <span class="text-11-medium text-text-weak">Conversación</span>
                       <Show when={runState() === "running"}>
                         <span class="text-10-medium text-text-weak">en curso…</span>
                       </Show>
                     </div>
-                    <div class="flex max-h-72 min-h-24 flex-col gap-1 overflow-auto rounded-md border border-border-weak-base p-2">
+                    <div
+                      class="overflow-auto rounded-md border border-border-weak-base p-3 font-mono text-12-regular max-h-[55vh] min-h-40"
+                      style={{ background: "#0b0e14" }}
+                    >
                       <Show
                         when={comms().length > 0}
                         fallback={
-                          <div class="px-2 py-6 text-center text-11-regular text-text-weak">
+                          <div class="py-6 text-center text-11-regular" style={{ color: "#6b7280" }}>
                             {runState() === "running"
                               ? "Los agentes están respondiendo…"
-                              : "Pulsa Onboarding para que los agentes se presenten y CHAI reparta los roles, o envía un mensaje al equipo."}
+                              : "Pulsa Onboarding y míralos presentarse y repartirse los roles, o envía un mensaje al equipo."}
                           </div>
                         }
                       >
@@ -673,23 +688,10 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                           {(item) => {
                             const line = chatLine(item)
                             return (
-                              <div
-                                classList={{
-                                  "flex flex-col gap-0.5 rounded-md px-2.5 py-1.5": true,
-                                  "bg-surface-base-hover": line.kind === "chai",
-                                  "border border-border-weak-base": line.kind !== "chai",
-                                }}
-                              >
-                                <span
-                                  classList={{
-                                    "text-11-medium": true,
-                                    "text-icon-error-base": line.kind === "error",
-                                    "text-text-strong": line.kind !== "error",
-                                  }}
-                                >
-                                  {line.speaker}
-                                </span>
-                                <span class="text-12-regular text-text-strong whitespace-pre-wrap">{line.body}</span>
+                              <div class="whitespace-pre-wrap py-0.5 leading-relaxed">
+                                <span style={{ color: speakerColor(item.from), "font-weight": 600 }}>{line.speaker}</span>
+                                <span style={{ color: "#6b7280" }}> ›&nbsp;</span>
+                                <span style={{ color: line.kind === "error" ? "#f87171" : "#cbd5e1" }}>{line.body}</span>
                               </div>
                             )
                           }}
@@ -697,41 +699,6 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                       </Show>
                     </div>
                   </div>
-
-                  <Show when={teamProfile()}>
-                    {(profile) => (
-                      <div class="flex flex-col gap-1.5">
-                        <span class="text-11-medium text-text-weak">Perfil del equipo (roles asignados)</span>
-                        <div class="flex max-h-40 flex-col gap-1 overflow-auto rounded-md border border-border-weak-base p-2">
-                          <For each={profile().agents}>
-                            {(agent) => (
-                              <div class="rounded border border-border-weak-base px-2 py-1.5">
-                                <div class="text-10-medium text-text-weak">
-                                  {agent.account} - {roleLabel(agent.recommendedRole ?? agent.role)}
-                                </div>
-                                <div class="text-12-regular text-text-strong whitespace-pre-wrap">{agent.summary}</div>
-                                <Show when={agent.capabilities?.length}>
-                                  <div class="mt-1 text-10-regular text-text-weak">
-                                    Puede: {agent.capabilities?.join(", ")}
-                                  </div>
-                                </Show>
-                                <Show when={agent.bestTasks?.length}>
-                                  <div class="mt-1 text-10-regular text-text-weak">
-                                    Mejor para: {agent.bestTasks?.join(", ")}
-                                  </div>
-                                </Show>
-                                <Show when={agent.limits?.length}>
-                                  <div class="mt-1 text-10-regular text-text-weak">
-                                    Limites: {agent.limits?.join(", ")}
-                                  </div>
-                                </Show>
-                              </div>
-                            )}
-                          </For>
-                        </div>
-                      </div>
-                    )}
-                  </Show>
 
                   {/* Pending permission approvals raised by agents */}
                   <Show when={permissionRequests().length > 0}>
@@ -870,61 +837,6 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                     </div>
                   </Show>
 
-                  <Show when={liveFeed().length > 0}>
-                    <div class="flex flex-col gap-1.5">
-                      <span class="text-11-medium text-text-weak">Eventos en vivo</span>
-                      <div class="flex max-h-48 flex-col gap-1 overflow-auto rounded-md border border-border-weak-base p-2">
-                        <For each={liveFeed()}>
-                          {(item) => (
-                            <div class="flex items-baseline gap-2">
-                              <span class="text-10-medium text-text-weak shrink-0">{item.label}</span>
-                              <span class="text-12-regular text-text-strong whitespace-pre-wrap">{item.text}</span>
-                            </div>
-                          )}
-                        </For>
-                      </div>
-                    </div>
-                  </Show>
-
-                  {/* Real activity feed: the project's agent sessions, most recent first. */}
-                  <div class="flex flex-col gap-1.5">
-                    <span class="text-11-medium text-text-weak">Actividad de los agentes</span>
-                    <Show
-                      when={activity().length > 0}
-                      fallback={
-                        <div class="rounded-md border border-border-weak-base px-4 py-8 text-center">
-                          <div class="text-13-medium text-text-strong">Todavia no hay actividad</div>
-                          <div class="text-12-regular text-text-weak mt-1">
-                            Inicia el equipo para abrir una sesión por agente. Aquí aparecerá su actividad.
-                          </div>
-                        </div>
-                      }
-                    >
-                      <div class="flex flex-col gap-1">
-                        <For each={activity()}>
-                          {(s) => (
-                            <div class="flex items-center justify-between rounded-md border border-border-weak-base px-3 py-2">
-                              <span class="text-12-regular text-text-strong truncate">{s.title}</span>
-                              <span class="text-11-regular text-text-weak shrink-0">{relativeTime(s.updated)}</span>
-                            </div>
-                          )}
-                        </For>
-                      </div>
-                    </Show>
-                  </div>
-
-                  <div class="flex flex-col gap-1.5">
-                    <span class="text-11-medium text-text-weak">Tipos de mensaje del router</span>
-                    <div class="flex flex-wrap gap-1.5">
-                      <For each={MESSAGE_TYPES}>
-                        {(m) => (
-                          <span class="text-10-medium px-2 py-0.5 rounded-full border border-border-weak-base text-text-weak">
-                            {m}
-                          </span>
-                        )}
-                      </For>
-                    </div>
-                  </div>
                 </div>
               </Show>
               </div>
