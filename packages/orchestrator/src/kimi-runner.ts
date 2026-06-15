@@ -34,8 +34,10 @@ export function buildKimiInvocation(spec: ClaudeAgentSpec, opts?: { command?: st
   const prompt = spec.role ? `[Rol asignado: ${spec.role}]\n\n${spec.prompt}` : spec.prompt
   const args = ["-p", prompt, "--output-format", "stream-json"]
   if (spec.model) args.push("--model", spec.model)
-  // computer_control is the dangerous, explicitly-approved level -> approve all.
-  args.push(spec.permissions?.includes("computer_control") ? "--yolo" : "--auto")
+  // NOTE: --auto / --yolo are INTERACTIVE-mode permission flags; kimi rejects
+  // them in print mode ("Cannot combine --prompt with --auto/--yolo"). `-p` is
+  // already non-interactive, so no approval flag is passed (permissions are
+  // coarse and not flag-controllable here).
   // Resume a prior thread when available (best-effort; print-mode resume support
   // varies by version). Each task is task-scoped, so missing resume is fine.
   if (spec.resumeSessionId) args.push("--session", spec.resumeSessionId)
@@ -79,6 +81,11 @@ export function parseKimiStreamEvent(raw: unknown): ClaudeRunEvent[] {
     if ((e.type === "system" || e.type === "init") && (e.session_id || e.sessionId)) {
       return [{ type: "init", sessionId: e.session_id ?? e.sessionId, model: e.model }]
     }
+    // Print mode emits the session id on a trailing meta line, e.g.
+    // {role:"meta", type:"session.resume_hint", session_id:"session_..."}.
+    if (e.type === "session.resume_hint" && (e.session_id || e.sessionId)) {
+      return [{ type: "init", sessionId: String(e.session_id ?? e.sessionId) }]
+    }
   }
 
   // OpenAI-style chat message lines.
@@ -104,8 +111,9 @@ export function parseKimiStreamEvent(raw: unknown): ClaudeRunEvent[] {
     return events.length ? events : [{ type: "unknown", raw }]
   }
 
-  // user / tool / system echo lines carry no UI-relevant signal.
-  if (e.role === "user" || e.role === "tool" || e.role === "system") return []
+  // user / tool / system / meta echo lines carry no further UI-relevant signal
+  // (the meta session id is captured above).
+  if (e.role === "user" || e.role === "tool" || e.role === "system" || e.role === "meta") return []
 
   return [{ type: "unknown", raw }]
 }

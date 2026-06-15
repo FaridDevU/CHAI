@@ -23,12 +23,12 @@ describe("buildKimiInvocation", () => {
     const prompt = inv.args[inv.args.indexOf("-p") + 1]
     expect(prompt).toContain("Eres el agente Backend.")
     expect(prompt).toContain("implement login")
-    // non-dangerous agent -> auto-approve mode (never hangs headless).
-    expect(inv.args).toContain("--auto")
+    // print mode rejects --auto/--yolo, so no approval flag is ever passed.
+    expect(inv.args).not.toContain("--auto")
     expect(inv.args).not.toContain("--yolo")
   })
 
-  test("computer_control grants full auto-approve (--yolo) and resume passes a session", () => {
+  test("never passes a permission flag, even for computer_control; resume passes a session", () => {
     const inv = buildKimiInvocation({
       cli: "kimi",
       configDir: "/c",
@@ -37,7 +37,7 @@ describe("buildKimiInvocation", () => {
       permissions: ["computer_control"],
       resumeSessionId: "sess-123",
     })
-    expect(inv.args).toContain("--yolo")
+    expect(inv.args).not.toContain("--yolo")
     expect(inv.args).not.toContain("--auto")
     expect(inv.args).toContain("--session")
     expect(inv.args).toContain("sess-123")
@@ -66,6 +66,17 @@ describe("parseKimiStreamEvent", () => {
   test("ignores user/tool/system echo lines", () => {
     expect(parseKimiStreamEvent({ role: "user", content: "x" })).toEqual([])
     expect(parseKimiStreamEvent({ role: "tool", tool_call_id: "tc_1", content: "ok" })).toEqual([])
+  })
+
+  test("captures the session id from the print-mode resume_hint meta line", () => {
+    expect(
+      parseKimiStreamEvent({
+        role: "meta",
+        type: "session.resume_hint",
+        session_id: "session_466f389b",
+        command: "kimi -r session_466f389b",
+      }),
+    ).toEqual([{ type: "init", sessionId: "session_466f389b" }])
   })
 
   test("normalizes a wrapping result envelope when present", () => {
