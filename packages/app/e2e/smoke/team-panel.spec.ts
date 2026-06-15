@@ -74,14 +74,14 @@ test("opens the team panel from home and renders agents + controls", async ({ pa
   await expectAppVisible(equipoNav)
   await equipoNav.click()
 
-  // Panel header + both agents on the Agentes tab.
+  // Panel header + both agents + the team controls on the Agentes tab.
   await expectAppVisible(page.getByText("Equipo del proyecto"))
-  await expect(page.getByText("Claude 1")).toBeVisible()
-  await expect(page.getByText("Kimi 1")).toBeVisible()
-
-  // Switch to Comunicación and assert the run controls are wired.
-  await page.getByRole("button", { name: "Comunicación" }).click()
+  await expect(page.getByText("Claude 1").first()).toBeVisible()
+  await expect(page.getByText("Kimi 1").first()).toBeVisible()
   await expect(page.getByRole("button", { name: "Onboarding" })).toBeVisible()
   await expect(page.getByRole("button", { name: "Enviar al equipo" })).toBeVisible()
-  await expect(page.getByRole("button", { name: "Enviar al agente" })).toBeVisible()
+
+  // Comunicación tab is the conversation terminal.
+  await page.getByRole("button", { name: "Comunicación" }).click()
+  await expect(page.getByText("Conversación")).toBeVisible()
 })

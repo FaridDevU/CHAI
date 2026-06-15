@@ -562,12 +562,8 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                   <Button type="button" variant="ghost" size="large" onClick={openAccounts}>
                     Gestionar cuentas
                   </Button>
-                </div>
-              </Show>
 
-              {/* COMMS tab */}
-              <Show when={tab() === "comms"}>
-                <div class="flex flex-col gap-3">
+                  {/* Team controls live here; the Comunicación tab is just the chat. */}
                   <div class="flex flex-col gap-2 rounded-md border border-border-weak-base p-3">
                     <div class="flex items-center justify-between gap-2">
                       <span class="rounded bg-surface-base-hover px-1.5 py-0.5 text-10-medium text-text-weak">
@@ -636,7 +632,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                     />
                     <div class="flex items-center justify-between gap-2">
                       <span class="text-11-regular text-text-weak">
-                        Enviar al equipo enruta automaticamente entre agentes.
+                        Mira la conversación en la pestaña Comunicación.
                       </span>
                       <div class="flex items-center gap-1.5">
                         <Button
@@ -660,7 +656,12 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                       </div>
                     </div>
                   </div>
+                </div>
+              </Show>
 
+              {/* COMMS tab */}
+              <Show when={tab() === "comms"}>
+                <div class="flex flex-col gap-3">
                   {/* The two IAs talking — a colored terminal (Kimi morado, Codex
                       celeste, Claude naranja, CHAI verde) */}
                   <div class="flex flex-col gap-1.5">
@@ -671,7 +672,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                       </Show>
                     </div>
                     <div
-                      class="overflow-auto rounded-md border border-border-weak-base p-3 font-mono text-12-regular max-h-[55vh] min-h-40"
+                      class="overflow-y-auto rounded-md border border-border-weak-base p-3 font-mono text-12-regular h-[52vh]"
                       style={{ background: "#0b0e14" }}
                     >
                       <Show
@@ -696,6 +697,21 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                             )
                           }}
                         </For>
+                        {/* Closing line: how the agents ended up agreeing on roles */}
+                        <Show when={teamProfile()}>
+                          {(profile) => (
+                            <div class="mt-2 whitespace-pre-wrap border-t border-[#1f2733] pt-2 leading-relaxed">
+                              <span style={{ color: "#34d399", "font-weight": 600 }}>CHAI</span>
+                              <span style={{ color: "#6b7280" }}> ›&nbsp;</span>
+                              <span style={{ color: "#cbd5e1" }}>
+                                {"Listo, así quedaron los roles:\n" +
+                                  profile()
+                                    .agents.map((a) => `• ${a.account} → ${roleLabel(a.recommendedRole ?? (a.role as string))}`)
+                                    .join("\n")}
+                              </span>
+                            </div>
+                          )}
+                        </Show>
                       </Show>
                     </div>
                   </div>
