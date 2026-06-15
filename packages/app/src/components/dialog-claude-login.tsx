@@ -75,7 +75,14 @@ function ClaudeLoginInner(props: { accountId: string; label: string; configDir: 
           </div>
         }
       >
-        <Terminal pty={pty()!} autoFocus class="h-80 overflow-hidden rounded-md border border-border-weak-base" />
+        <Terminal
+          pty={pty()!}
+          autoFocus
+          class="h-80 overflow-hidden rounded-md border border-border-weak-base"
+          onConnectError={(err) =>
+            setError(`No se pudo conectar la terminal: ${err instanceof Error ? err.message : String(err)}`)
+          }
+        />
       </Show>
 
       <div class="flex justify-end gap-2">
