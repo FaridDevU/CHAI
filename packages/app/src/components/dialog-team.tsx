@@ -86,12 +86,12 @@ const MESSAGE_TYPES = [
   "revisión",
 ]
 
-export function DialogTeam(props: { directory?: string; sessions?: () => SessionActivity[] }) {
+export function DialogTeam(props: { directory?: string; sessions?: () => SessionActivity[]; autoStart?: boolean }) {
   const dialog = useDialog()
   const providers = useProviders()
   const serverSDK = useServerSDK()
   const platform = usePlatform()
-  const [tab, setTab] = createSignal<"agents" | "comms">("agents")
+  const [tab, setTab] = createSignal<"agents" | "comms">(props.autoStart ? "comms" : "agents")
   const [selectedAgentId, setSelectedAgentId] = createSignal("")
   const [message, setMessage] = createSignal("")
   const [sending, setSending] = createSignal(false)
@@ -110,6 +110,20 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
       setLiveFeed((current) => [...current.slice(-100), { label: agent?.account ?? "agente", text, time: Date.now() }])
     })
     if (unsubscribe) onCleanup(unsubscribe)
+  })
+
+  // When opened right after "Iniciar equipo": run onboarding once so the user can
+  // watch the agents introduce themselves and CHAI hand out the roles, instead of
+  // landing in a chat. Guarded so it never re-fires or spends tokens on reopen.
+  onMount(() => {
+    if (!props.autoStart) return
+    queueMicrotask(() => {
+      const rt = runtime()
+      if (!rt) return
+      if (rt.teamProfile() || rt.runState() !== "idle") return
+      if ((team()?.agents.length ?? 0) === 0) return
+      void runOnboarding()
+    })
   })
 
   // Pull the latest team straight from .chai/team.json (the source of truth).

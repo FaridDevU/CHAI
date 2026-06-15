@@ -5,8 +5,6 @@ import { TextField } from "@opencode-ai/ui/text-field"
 import { Icon } from "@opencode-ai/ui/icon"
 import { For, Show, createMemo, createSignal } from "solid-js"
 import { createStore } from "solid-js/store"
-import { useNavigate } from "@solidjs/router"
-import { base64Encode } from "@opencode-ai/core/util/encode"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { accountProviderId, createAccountRuntime, type Role } from "@chai/orchestrator"
 import { useGlobal } from "@/context/global"
@@ -21,7 +19,6 @@ import {
   PERMISSIONS,
   ROLES,
   Teams,
-  agentSessionTitle,
   isCliProvider,
   providerLabel,
   roleLabel,
@@ -29,6 +26,7 @@ import {
   type TeamConfig,
 } from "@/state/agents"
 import { DialogAccounts } from "@/components/dialog-accounts"
+import { DialogTeam } from "@/components/dialog-team"
 
 const STACKS = ["Web (frontend)", "API / Backend", "Full-stack", "Python", "Móvil", "Otro"]
 const COUNTS = ["1", "2", "3", "4", "Personalizado"]
@@ -44,7 +42,6 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
   const dialog = useDialog()
   const global = useGlobal()
   const platform = usePlatform()
-  const navigate = useNavigate()
   const pickDirectory = useDirectoryPicker()
   const providers = useProviders()
   const [starting, setStarting] = createSignal(false)
@@ -178,27 +175,18 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
       })
     }
 
-    // Spin up one session per agent so the team materializes as real sessions.
-    // Not autonomous yet — true per-account routing is the orchestrator's job.
-    try {
-      for (const agent of cfg.agents) {
-        await ctx.sdk.client.session.create({
-          directory: s.directory,
-          title: agentSessionTitle(agent),
-        })
-      }
-    } catch (err) {
-      showToast({
-        title: "No se pudieron crear todas las sesiones del equipo",
-        description: err instanceof Error ? err.message : String(err),
-      })
-    }
+    // NOTE: we deliberately do NOT pre-create one opencode session per agent.
+    // CLI agents (Claude/Kimi/Codex) run headless via their own runner, so those
+    // sessions were never used and just cluttered the sidebar; non-CLI agents get
+    // a session created on demand by the team runtime when they first run.
 
     ctx.projects.open(s.directory)
     ctx.projects.touch(s.directory)
     setStarting(false)
     dialog.close()
-    navigate(`/${base64Encode(s.directory)}/session`)
+    // Open the team panel and let the agents introduce themselves (onboarding),
+    // so the user watches who takes each role instead of landing in a chat.
+    dialog.show(() => <DialogTeam directory={s.directory} autoStart />)
   }
 
   return (
