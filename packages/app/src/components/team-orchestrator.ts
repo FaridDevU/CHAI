@@ -17,19 +17,23 @@ export function toOrchestratorAgent(agent: TeamAgent, index: number, sessionId?:
   }
 }
 
-async function activateAccount(serverSDK: ServerSDK, providerID: string, accountKey: string) {
+// The account-activate route isn't in the generated SDK yet, so this is a hand
+// -rolled request. It still reuses the SDK's auth headers and the directory
+// workspace-routing query so it hits the right instance with the right
+// credentials (the server trusts the loopback sidecar; auth gates remote use).
+async function activateAccount(serverSDK: ServerSDK, directory: string, providerID: string, accountKey: string) {
   const base = serverSDK.url.replace(/\/+$/, "")
-  const headers: Record<string, string> = {}
-  const server = serverSDK.scope
-  void server
+  const url =
+    `${base}/provider/${encodeURIComponent(providerID)}/account/${encodeURIComponent(accountKey)}/activate` +
+    `?directory=${encodeURIComponent(directory)}`
 
-  const response = await fetch(
-    `${base}/provider/${encodeURIComponent(providerID)}/account/${encodeURIComponent(accountKey)}/activate`,
-    { method: "POST", headers },
-  )
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { ...serverSDK.authHeaders, "x-opencode-directory": encodeURIComponent(directory) },
+  })
   if (!response.ok) {
     const text = await response.text().catch(() => "")
-    throw new Error(text || `No se pudo activar la cuenta ${accountKey}`)
+    throw new Error(text || `No se pudo activar la cuenta ${accountKey} (HTTP ${response.status})`)
   }
 }
 
@@ -49,7 +53,7 @@ export function createTeamTransport(input: {
       const providerID = OPENCODE_PROVIDER[teamAgent.provider]
       if (!providerID) throw new Error(`Proveedor ${teamAgent.provider} no tiene adaptador conectado`)
 
-      await activateAccount(input.serverSDK, providerID, teamAgent.accountId)
+      await activateAccount(input.serverSDK, input.directory, providerID, teamAgent.accountId)
 
       const model = input.modelForProvider(providerID)
       if (!model) throw new Error(`No hay modelo disponible para ${providerID}`)

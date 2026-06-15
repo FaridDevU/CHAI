@@ -17,24 +17,27 @@ export function authFromToken(token: string | null) {
   }
 }
 
+// Auth headers the SDK attaches for a server. Exported so non-generated calls
+// (e.g. CHAI's account-activate route, which isn't in the SDK yet) can reuse
+// the exact same auth instead of hand-rolling an unauthenticated request.
+export function authHeadersForServer(server: ServerConnection.HttpBase): Record<string, string> {
+  if (!server.password) return {}
+  return {
+    Authorization: `Basic ${authTokenFromCredentials({ username: server.username, password: server.password })}`,
+  }
+}
+
 export function createSdkForServer({
   server,
   ...config
 }: Omit<NonNullable<Parameters<typeof createOpencodeClient>[0]>, "baseUrl"> & {
   server: ServerConnection.HttpBase
 }) {
-  const auth = (() => {
-    if (!server.password) return
-    return {
-      Authorization: `Basic ${authTokenFromCredentials({ username: server.username, password: server.password })}`,
-    }
-  })()
-
   return createOpencodeClient({
     ...config,
     headers: {
       ...(config.headers instanceof Headers ? Object.fromEntries(config.headers.entries()) : config.headers),
-      ...auth,
+      ...authHeadersForServer(server),
     },
     baseUrl: server.url,
   })

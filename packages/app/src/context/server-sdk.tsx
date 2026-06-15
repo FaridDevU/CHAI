@@ -3,7 +3,7 @@ import { createSimpleContext } from "@opencode-ai/ui/context"
 import { createGlobalEmitter } from "@solid-primitives/event-bus"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { batch, onCleanup, onMount } from "solid-js"
-import { createSdkForServer } from "@/utils/server"
+import { authHeadersForServer, createSdkForServer } from "@/utils/server"
 import { useLanguage } from "./language"
 import { usePlatform } from "./platform"
 import { ServerConnection, useServer } from "./server"
@@ -245,6 +245,7 @@ export function createServerSdkContext(server: ServerConnection.Any, scope: Serv
   return {
     scope,
     url: server.http.url,
+    authHeaders: authHeadersForServer(server.http),
     client: sdk,
     event: {
       on: emitter.on.bind(emitter),
