@@ -29,10 +29,16 @@ function ClaudeLoginInner(props: { accountId: string; label: string; configDir: 
   const [error, setError] = createSignal<string>()
 
   onMount(() => {
+    // node-pty spawns the command directly (no PATHEXT), so on Windows we must
+    // go through cmd.exe for `claude` to resolve to claude.cmd. The command is
+    // fixed (no user input), so the shell string is safe.
+    const isWindows = navigator.userAgent.includes("Windows")
+    const command = isWindows ? "cmd.exe" : "claude"
+    const args = isWindows ? ["/d", "/s", "/c", "claude login"] : ["login"]
     sdk.client.pty
       .create({
-        command: "claude",
-        args: ["login"],
+        command,
+        args,
         cwd: props.profileDir,
         env: { CLAUDE_CONFIG_DIR: props.configDir },
         title: `claude login · ${props.label}`,
