@@ -3,7 +3,15 @@ import type { ChildProcess } from "node:child_process"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { delimiter, dirname, join } from "node:path"
-import { buildClaudeInvocation, buildKimiInvocation, parseClaudeStreamLine, parseKimiStreamLine } from "@chai/orchestrator"
+import {
+  buildClaudeInvocation,
+  buildCodexInvocation,
+  buildKimiInvocation,
+  parseClaudeStreamLine,
+  parseCodexStreamLine,
+  parseKimiStreamLine,
+} from "@chai/orchestrator"
+import type { AgentCli } from "@chai/orchestrator"
 import type { ClaudeAgentSpec, ClaudeRunEvent, ClaudeRunResult } from "@chai/orchestrator"
 import { getLogger } from "./logging"
 
@@ -19,30 +27,46 @@ const running = new Map<string, ChildProcess>()
  * exist. Returns the command plus extra dirs to prepend to PATH so the CLI can
  * find its own sibling tools (e.g. kimi ships fd.exe next to kimi.exe).
  */
-export function resolveCliCommand(cli: "claude" | "kimi"): { command: string; extraPath: string[] } {
+export function resolveCliCommand(cli: AgentCli): { command: string; extraPath: string[] } {
   const home = homedir()
   const win = process.platform === "win32"
-  const candidates =
-    cli === "kimi"
-      ? win
-        ? [join(home, ".kimi-code", "bin", "kimi.exe")]
-        : [join(home, ".kimi-code", "bin", "kimi")]
-      : win
-        ? [join(home, "AppData", "Roaming", "npm", "claude.cmd"), join(home, "AppData", "Roaming", "npm", "claude.exe")]
-        : [
-            join(home, ".claude", "local", "claude"),
-            "/opt/homebrew/bin/claude",
-            "/usr/local/bin/claude",
-            join(home, ".npm-global", "bin", "claude"),
-          ]
-  for (const candidate of candidates) {
+  const candidatesByCli: Record<AgentCli, string[]> = {
+    kimi: win
+      ? [join(home, ".kimi-code", "bin", "kimi.exe")]
+      : [join(home, ".kimi-code", "bin", "kimi")],
+    codex: win
+      ? [
+          join(home, "AppData", "Local", "Programs", "OpenAI", "Codex", "bin", "codex.exe"),
+          join(home, "AppData", "Roaming", "npm", "codex.cmd"),
+          join(home, "AppData", "Roaming", "npm", "codex.exe"),
+        ]
+      : [
+          join(home, ".codex", "bin", "codex"),
+          "/opt/homebrew/bin/codex",
+          "/usr/local/bin/codex",
+          join(home, ".npm-global", "bin", "codex"),
+        ],
+    claude: win
+      ? [join(home, "AppData", "Roaming", "npm", "claude.cmd"), join(home, "AppData", "Roaming", "npm", "claude.exe")]
+      : [
+          join(home, ".claude", "local", "claude"),
+          "/opt/homebrew/bin/claude",
+          "/usr/local/bin/claude",
+          join(home, ".npm-global", "bin", "claude"),
+        ],
+  }
+  for (const candidate of candidatesByCli[cli]) {
     if (existsSync(candidate)) return { command: candidate, extraPath: [dirname(candidate)] }
   }
   // Not found in a known location — let cross-spawn try PATH, but still widen
   // PATH with the usual bin dirs in case the GUI launch dropped them.
   const extraPath = win
-    ? [join(home, "AppData", "Roaming", "npm"), join(home, ".kimi-code", "bin")]
-    : ["/opt/homebrew/bin", "/usr/local/bin", join(home, ".npm-global", "bin")]
+    ? [
+        join(home, "AppData", "Roaming", "npm"),
+        join(home, ".kimi-code", "bin"),
+        join(home, "AppData", "Local", "Programs", "OpenAI", "Codex", "bin"),
+      ]
+    : ["/opt/homebrew/bin", "/usr/local/bin", join(home, ".npm-global", "bin"), join(home, ".codex", "bin")]
   return { command: cli, extraPath }
 }
 
@@ -58,12 +82,14 @@ export function runClaudeAgent(
   spec: ClaudeAgentSpec,
   onEvent: (event: ClaudeRunEvent) => void,
 ): Promise<ClaudeRunResult> {
-  const isKimi = spec.cli === "kimi"
-  const inv = isKimi ? buildKimiInvocation(spec) : buildClaudeInvocation(spec)
-  const parseStreamLine = isKimi ? parseKimiStreamLine : parseClaudeStreamLine
+  const cli: AgentCli = spec.cli === "kimi" ? "kimi" : spec.cli === "codex" ? "codex" : "claude"
+  const inv =
+    cli === "kimi" ? buildKimiInvocation(spec) : cli === "codex" ? buildCodexInvocation(spec) : buildClaudeInvocation(spec)
+  const parseStreamLine =
+    cli === "kimi" ? parseKimiStreamLine : cli === "codex" ? parseCodexStreamLine : parseClaudeStreamLine
   // Resolve the CLI from its known install location (PATH-independent) and widen
   // the child PATH so a GUI-launched app still finds it and its sibling tools.
-  const { command, extraPath } = resolveCliCommand(isKimi ? "kimi" : "claude")
+  const { command, extraPath } = resolveCliCommand(cli)
   const env: Record<string, string | undefined> = { ...process.env, ...inv.env }
   if (extraPath.length) env.PATH = [...extraPath, env.PATH ?? env.Path ?? ""].filter(Boolean).join(delimiter)
 
@@ -83,8 +109,8 @@ export function runClaudeAgent(
     // Diagnostics: log the resolved command + isolated config dir (never the
     // prompt) so a CLI failure can be traced to path/auth/flags/version.
     getLogger()?.info(
-      `[agent ${runId}] launching ${command} (${isKimi ? "kimi" : "claude"}) cwd=${inv.cwd} configDir=${
-        inv.env?.KIMI_CODE_HOME ?? inv.env?.CLAUDE_CONFIG_DIR ?? "?"
+      `[agent ${runId}] launching ${command} (${cli}) cwd=${inv.cwd} configDir=${
+        inv.env?.KIMI_CODE_HOME ?? inv.env?.CODEX_HOME ?? inv.env?.CLAUDE_CONFIG_DIR ?? "?"
       } args=${inv.args.filter((a) => a !== spec.prompt && !a.startsWith("[Rol")).join(" ")}`,
     )
 
@@ -127,7 +153,9 @@ export function runClaudeAgent(
       running.delete(runId)
       reject(
         new Error(
-          `No se pudo ejecutar '${command}': ${err.message}. ¿Está instalado el CLI de ${isKimi ? "Kimi Code" : "Claude"}?`,
+          `No se pudo ejecutar '${command}': ${err.message}. ¿Está instalado el CLI de ${
+            cli === "kimi" ? "Kimi Code" : cli === "codex" ? "Codex" : "Claude"
+          }?`,
         ),
       )
     })

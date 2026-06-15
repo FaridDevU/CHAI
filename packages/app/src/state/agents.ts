@@ -26,10 +26,12 @@ export function providerLabel(id: string) {
 }
 
 // Providers that connect + run as their own real CLI (the sanctioned
-// subscription path) instead of an opencode provider/OAuth: Claude (`claude`)
-// and Kimi (`kimi`). Their readiness is the account status the user confirms
-// after the CLI login, and their agent runs go through the desktop CLI runner.
-export const CLI_PROVIDERS = ["claude", "kimi"] as const
+// subscription path) instead of an opencode provider/OAuth: Claude (`claude`),
+// Kimi (`kimi`) and Codex (`codex`). A "Sign in with ChatGPT" subscription can't
+// drive the OpenAI API, so Codex runs as the real `codex` CLI like the others.
+// Their readiness is the account status the user confirms after the CLI login,
+// and their agent runs go through the desktop CLI runner.
+export const CLI_PROVIDERS = ["claude", "kimi", "codex"] as const
 export function isCliProvider(provider: string): provider is (typeof CLI_PROVIDERS)[number] {
   return (CLI_PROVIDERS as readonly string[]).includes(provider)
 }

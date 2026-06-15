@@ -11,8 +11,8 @@
 
 export type ClaudePermissionMode = "default" | "acceptEdits" | "dontAsk" | "bypassPermissions" | "plan"
 
-/** Which CLI backs this agent run. Defaults to "claude". See kimi-runner.ts. */
-export type AgentCli = "claude" | "kimi"
+/** Which CLI backs this agent run. Defaults to "claude". See kimi-runner.ts / codex-runner.ts. */
+export type AgentCli = "claude" | "kimi" | "codex"
 
 export interface ClaudeAgentSpec {
   /** Which CLI to run (claude | kimi). Defaults to "claude" when omitted. */

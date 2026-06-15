@@ -44,7 +44,9 @@ export function DialogAccounts() {
     const configDir =
       account.provider === "kimi"
         ? runtime.env.KIMI_CODE_HOME ?? runtime.configPath
-        : runtime.env.CLAUDE_CONFIG_DIR ?? runtime.configPath
+        : account.provider === "codex"
+          ? runtime.env.CODEX_HOME ?? runtime.configPath
+          : runtime.env.CLAUDE_CONFIG_DIR ?? runtime.configPath
     try {
       // The login PTY cwds into the profile dir, so it must exist.
       await ensureDir(runtime.profilePath)
@@ -60,7 +62,7 @@ export function DialogAccounts() {
     void import("@/components/dialog-claude-login").then((x) => {
       void dialog.show(() => (
         <x.DialogClaudeLogin
-          provider={account.provider === "kimi" ? "kimi" : "claude"}
+          provider={account.provider === "kimi" ? "kimi" : account.provider === "codex" ? "codex" : "claude"}
           accountId={account.id}
           label={account.label}
           configDir={configDir}

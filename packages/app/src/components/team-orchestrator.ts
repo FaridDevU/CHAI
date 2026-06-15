@@ -42,7 +42,9 @@ export function createClaudeTransport(input: {
       const configDir =
         teamAgent.provider === "kimi"
           ? runtime.env.KIMI_CODE_HOME ?? runtime.configPath
-          : runtime.env.CLAUDE_CONFIG_DIR ?? runtime.configPath
+          : teamAgent.provider === "codex"
+            ? runtime.env.CODEX_HOME ?? runtime.configPath
+            : runtime.env.CLAUDE_CONFIG_DIR ?? runtime.configPath
       if (!configDir) throw new Error(`La cuenta ${teamAgent.account} no tiene un runtime aislado`)
 
       // NOTE: spread permissions into a PLAIN array. teamAgent often comes from a
@@ -50,7 +52,7 @@ export function createClaudeTransport(input: {
       // Electron IPC boundary throws "An object could not be cloned". Every other
       // field here is a primitive string, so this keeps the whole spec cloneable.
       const spec: ClaudeAgentSpec = {
-        cli: teamAgent.provider === "kimi" ? "kimi" : "claude",
+        cli: teamAgent.provider === "kimi" ? "kimi" : teamAgent.provider === "codex" ? "codex" : "claude",
         configDir,
         projectDir: input.directory,
         prompt: message.text,

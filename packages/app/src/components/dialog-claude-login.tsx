@@ -8,7 +8,7 @@ import { Terminal } from "@/components/terminal"
 import { Accounts } from "@/state/agents"
 import type { LocalPTY } from "@/context/terminal"
 
-type CliProvider = "claude" | "kimi"
+type CliProvider = "claude" | "kimi" | "codex"
 
 type LoginProps = {
   accountId: string
@@ -26,6 +26,7 @@ type LoginProps = {
 const CLI = {
   claude: { name: "Claude", command: "claude login", envKey: "CLAUDE_CONFIG_DIR" },
   kimi: { name: "Kimi", command: "kimi login", envKey: "KIMI_CODE_HOME" },
+  codex: { name: "Codex", command: "codex login", envKey: "CODEX_HOME" },
 } as const
 
 // In-app CLI login for a Claude/Kimi account: runs the real CLI in an embedded
