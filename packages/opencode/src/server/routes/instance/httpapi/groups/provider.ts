@@ -81,6 +81,7 @@ export const ProviderApi = HttpApi.make("provider")
             description: "Handle the OAuth callback from a provider after user authorization.",
           }),
         ),
+        // CHAI: activate a stored multi-account credential. Not in upstream opencode.
         HttpApiEndpoint.post("activateAccount", `${root}/:providerID/account/:accountKey/activate`, {
           params: { providerID: ProviderV2.ID, accountKey: Schema.String },
           query: WorkspaceRoutingQuery,

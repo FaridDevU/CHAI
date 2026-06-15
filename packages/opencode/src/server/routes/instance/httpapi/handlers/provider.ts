@@ -108,6 +108,8 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
       return true
     })
 
+    // CHAI: make a stored multi-account credential active before a turn. Not in
+    // upstream opencode; paired with the "activateAccount" route in groups/provider.
     const activateAccount = Effect.fn("ProviderHttpApi.activateAccount")(function* (ctx: {
       params: { providerID: ProviderV2.ID; accountKey: string }
     }) {
@@ -135,6 +137,6 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
       .handle("auth", auth)
       .handleRaw("authorize", authorizeRaw)
       .handle("callback", callback)
-      .handle("activateAccount", activateAccount)
+      .handle("activateAccount", activateAccount) // CHAI
   }),
 )

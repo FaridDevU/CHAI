@@ -14,6 +14,8 @@ export const controlHandlers = HttpApiBuilder.group(RootHttpApi, "control", (han
       params: { providerID: ProviderV2.ID }
       payload: Auth.Info
     }) {
+      // CHAI: with an accountKey, append a labeled credential (multi-account)
+      // instead of replacing the single one. Upstream only does auth.set.
       if (ctx.payload.accountKey) {
         yield* auth.add(ctx.params.providerID, ctx.payload).pipe(Effect.orDie)
         return true
