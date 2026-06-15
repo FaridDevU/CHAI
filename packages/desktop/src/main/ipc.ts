@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process"
-import { mkdir, stat, writeFile } from "node:fs/promises"
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, relative } from "node:path"
 import { app, BrowserWindow, Notification, clipboard, dialog, ipcMain, shell } from "electron"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
@@ -247,6 +247,24 @@ export function registerIpcHandlers(deps: Deps) {
       await mkdir(dirname(target), { recursive: true })
       await writeFile(target, content, "utf8")
       return target
+    },
+  )
+
+  // Read a file from inside a project directory (e.g. .chai/team.json). Returns
+  // null when the file does not exist; same traversal guard as the writer.
+  ipcMain.handle(
+    "read-project-file",
+    async (_event: IpcMainInvokeEvent, directory: string, relativePath: string): Promise<string | null> => {
+      if (!directory || isAbsolute(relativePath)) throw new Error("Invalid project file path")
+      const target = join(directory, relativePath)
+      const rel = relative(directory, target)
+      if (rel.startsWith("..") || isAbsolute(rel)) throw new Error("Refusing to read outside project directory")
+      try {
+        return await readFile(target, "utf8")
+      } catch (err) {
+        if (err && typeof err === "object" && (err as NodeJS.ErrnoException).code === "ENOENT") return null
+        throw err
+      }
     },
   )
 

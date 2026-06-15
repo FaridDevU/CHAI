@@ -135,28 +135,65 @@ export const Accounts = {
   },
 }
 
-function readTeams(): Record<string, TeamConfig> {
+/** The authoritative on-disk team config, relative to the project directory. */
+export const TEAM_FILE = ".chai/team.json"
+
+type TeamsMap = Record<string, TeamConfig>
+
+function loadTeams(): TeamsMap {
   try {
     return JSON.parse(localStorage.getItem(TEAMS_KEY) || "{}")
   } catch (err) {
-    console.warn("[chai] could not read saved teams", err)
+    console.warn("[chai] could not read cached teams", err)
     return {}
   }
 }
 
+// Reactive cache of teams by directory, seeded from localStorage. The real
+// source of truth is each project's .chai/team.json; this cache is refreshed
+// from that file via hydrate() so the UI updates even on a fresh machine.
+const [teamStore, setTeamStore] = createStore<TeamsMap>(loadTeams())
+const hydrated = new Set<string>()
+
+function persistTeams(): boolean {
+  try {
+    localStorage.setItem(TEAMS_KEY, JSON.stringify(teamStore))
+    return true
+  } catch (err) {
+    console.error("[chai] could not persist team cache", err)
+    return false
+  }
+}
+
 export const Teams = {
-  /** Persist a team config. Returns false if storage failed (caller should warn). */
+  /** Update the cache for a team. Returns false if the cache write failed.
+   *  The on-disk .chai/team.json (written at "Iniciar equipo") stays the source
+   *  of truth; this only keeps the fast reactive cache in sync. */
   save: (cfg: TeamConfig): boolean => {
-    try {
-      const all = readTeams()
-      all[cfg.directory] = cfg
-      localStorage.setItem(TEAMS_KEY, JSON.stringify(all))
-      return true
-    } catch (err) {
-      console.error("[chai] could not persist team", err)
-      return false
-    }
+    setTeamStore(cfg.directory, cfg)
+    return persistTeams()
   },
-  get: (directory: string): TeamConfig | undefined => readTeams()[directory],
-  list: (): TeamConfig[] => Object.values(readTeams()),
+  get: (directory: string): TeamConfig | undefined => teamStore[directory],
+  list: (): TeamConfig[] => Object.values(teamStore),
+  /** Refresh the cache for a directory from its .chai/team.json (file wins).
+   *  Runs at most once per directory; pass platform.readProjectFile as `read`. */
+  hydrate: async (
+    directory: string,
+    read: (directory: string, relativePath: string) => Promise<string | null>,
+  ): Promise<TeamConfig | undefined> => {
+    if (!directory || hydrated.has(directory)) return teamStore[directory]
+    hydrated.add(directory)
+    try {
+      const raw = await read(directory, TEAM_FILE)
+      if (raw) {
+        const cfg = JSON.parse(raw) as TeamConfig
+        setTeamStore(directory, cfg)
+        persistTeams()
+        return cfg
+      }
+    } catch (err) {
+      console.warn("[chai] could not read .chai/team.json; using cached team", err)
+    }
+    return teamStore[directory]
+  },
 }

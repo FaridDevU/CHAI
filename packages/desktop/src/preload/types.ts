@@ -92,6 +92,7 @@ export type ElectronAPI = {
   releasePickedFiles: (token: string) => Promise<void>
   saveFilePicker: (opts?: { title?: string; defaultPath?: string }) => Promise<string | null>
   writeProjectFile: (directory: string, relativePath: string, content: string) => Promise<string>
+  readProjectFile: (directory: string, relativePath: string) => Promise<string | null>
   openLink: (url: string) => void
   openPath: (path: string, app?: string) => Promise<void>
   openIsolatedSubscriptionLogin: (input: IsolatedSubscriptionLoginInput) => Promise<void>

@@ -1,7 +1,7 @@
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
-import { For, Show, createMemo, createSignal } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal } from "solid-js"
 import { Orchestrator, type Message } from "@chai/orchestrator"
 import {
   Accounts,
@@ -16,6 +16,7 @@ import {
 } from "@/state/agents"
 import { useProviders } from "@/hooks/use-providers"
 import { useServerSDK } from "@/context/server-sdk"
+import { usePlatform } from "@/context/platform"
 import { DialogAccounts } from "@/components/dialog-accounts"
 import { createTeamTransport, toOrchestratorAgent } from "@/components/team-orchestrator"
 
@@ -54,12 +55,18 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
   const dialog = useDialog()
   const providers = useProviders()
   const serverSDK = useServerSDK()
+  const platform = usePlatform()
   const [tab, setTab] = createSignal<"agents" | "comms">("agents")
   const [selectedAgentId, setSelectedAgentId] = createSignal("")
   const [message, setMessage] = createSignal("")
   const [sending, setSending] = createSignal(false)
   const [createdSessions, setCreatedSessions] = createSignal<Record<string, string>>({})
   const [comms, setComms] = createSignal<Message[]>([])
+
+  // Pull the latest team straight from .chai/team.json (the source of truth).
+  createEffect(() => {
+    if (props.directory && platform.readProjectFile) void Teams.hydrate(props.directory, platform.readProjectFile)
+  })
 
   const teams = createMemo(() => Teams.list())
   const team = createMemo<TeamConfig | undefined>(() =>

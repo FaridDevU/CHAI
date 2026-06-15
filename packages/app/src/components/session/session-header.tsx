@@ -147,6 +147,12 @@ export function SessionHeader() {
   const { params, view } = useSessionLayout()
 
   const projectDirectory = createMemo(() => decode64(params.dir) ?? "")
+  // Refresh the team cache from the project's .chai/team.json (source of truth),
+  // so the team panel shows up even on a machine without the localStorage cache.
+  createEffect(() => {
+    const dir = projectDirectory()
+    if (dir && platform.readProjectFile) void Teams.hydrate(dir, platform.readProjectFile)
+  })
   const hasTeam = createMemo(() => !!Teams.get(projectDirectory()))
   const teamSessions = (): SessionActivity[] =>
     (sync.data.session ?? [])

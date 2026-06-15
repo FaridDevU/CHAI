@@ -92,6 +92,7 @@ const api: ElectronAPI = {
   saveFilePicker: (opts) => ipcRenderer.invoke("save-file-picker", opts),
   writeProjectFile: (directory, relativePath, content) =>
     ipcRenderer.invoke("write-project-file", directory, relativePath, content),
+  readProjectFile: (directory, relativePath) => ipcRenderer.invoke("read-project-file", directory, relativePath),
   openLink: (url) => ipcRenderer.send("open-link", url),
   openPath: (path, app) => ipcRenderer.invoke("open-path", path, app),
   openIsolatedSubscriptionLogin: (input) => ipcRenderer.invoke("open-isolated-subscription-login", input),
