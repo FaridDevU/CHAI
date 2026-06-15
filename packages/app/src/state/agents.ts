@@ -53,6 +53,14 @@ export function roleLabel(id: string) {
   return ROLES.find((r) => r.id === id)?.label ?? id
 }
 
+// The session title CHAI gives each agent when the team starts. Used both to
+// create the sessions and to match them back to agents, so it must stay a
+// single shared definition. "Agente" is kept for auto so older titles match.
+export function agentSessionTitle(agent: { role: Role; account: string }) {
+  const role = agent.role === "auto" ? "Agente" : roleLabel(agent.role)
+  return `${role} · ${agent.account}`
+}
+
 export const PERMISSIONS = [
   { id: "read_project", label: "Leer proyecto" },
   { id: "edit_project", label: "Editar proyecto" },
@@ -90,16 +98,22 @@ function loadAccounts(): { accounts: Account[] } {
   try {
     const v = localStorage.getItem(ACCOUNTS_KEY)
     if (v) return JSON.parse(v)
-  } catch {}
+  } catch (err) {
+    console.warn("[chai] could not read saved accounts; starting empty", err)
+  }
   return { accounts: [] }
 }
 
 const [accountStore, setAccountStore] = createStore<{ accounts: Account[] }>(loadAccounts())
 
-function persistAccounts() {
+function persistAccounts(): boolean {
   try {
     localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accountStore))
-  } catch {}
+    return true
+  } catch (err) {
+    console.error("[chai] could not persist accounts", err)
+    return false
+  }
 }
 
 export const Accounts = {
@@ -121,28 +135,28 @@ export const Accounts = {
   },
 }
 
+function readTeams(): Record<string, TeamConfig> {
+  try {
+    return JSON.parse(localStorage.getItem(TEAMS_KEY) || "{}")
+  } catch (err) {
+    console.warn("[chai] could not read saved teams", err)
+    return {}
+  }
+}
+
 export const Teams = {
-  save: (cfg: TeamConfig) => {
+  /** Persist a team config. Returns false if storage failed (caller should warn). */
+  save: (cfg: TeamConfig): boolean => {
     try {
-      const all = JSON.parse(localStorage.getItem(TEAMS_KEY) || "{}")
+      const all = readTeams()
       all[cfg.directory] = cfg
       localStorage.setItem(TEAMS_KEY, JSON.stringify(all))
-    } catch {}
-  },
-  get: (directory: string): TeamConfig | undefined => {
-    try {
-      const all = JSON.parse(localStorage.getItem(TEAMS_KEY) || "{}")
-      return all[directory]
-    } catch {
-      return undefined
+      return true
+    } catch (err) {
+      console.error("[chai] could not persist team", err)
+      return false
     }
   },
-  list: (): TeamConfig[] => {
-    try {
-      const all = JSON.parse(localStorage.getItem(TEAMS_KEY) || "{}")
-      return Object.values(all)
-    } catch {
-      return []
-    }
-  },
+  get: (directory: string): TeamConfig | undefined => readTeams()[directory],
+  list: (): TeamConfig[] => Object.values(readTeams()),
 }

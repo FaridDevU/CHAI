@@ -8,6 +8,7 @@ import {
   OPENCODE_PROVIDER,
   PERMISSIONS,
   Teams,
+  agentSessionTitle,
   providerLabel,
   roleLabel,
   type TeamAgent,
@@ -25,13 +26,6 @@ export type SessionActivity = { id: string; title: string; updated: number }
 
 function permLabel(id: string) {
   return PERMISSIONS.find((p) => p.id === id)?.label ?? id
-}
-
-// The session title CHAI gives each agent when the team starts (see project-agent-setup).
-function agentSessionTitle(agent: TeamAgent) {
-  // Keep "Agente" for auto so titles of already-created sessions still match.
-  const role = agent.role === "auto" ? "Agente" : roleLabel(agent.role)
-  return `${role} · ${agent.account}`
 }
 
 function relativeTime(ms: number): string {

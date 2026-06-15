@@ -19,6 +19,7 @@ import {
   PERMISSIONS,
   ROLES,
   Teams,
+  agentSessionTitle,
   providerLabel,
   roleLabel,
   type RoleMode,
@@ -127,7 +128,12 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
         ),
       })),
     }
-    Teams.save(cfg)
+    if (!Teams.save(cfg)) {
+      showToast({
+        title: "No se pudo guardar la configuración del equipo",
+        description: "El almacenamiento local falló; revisa la consola para más detalles.",
+      })
+    }
 
     const ctx = global.createServerCtx(props.server)
 
@@ -146,10 +152,9 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
     // Not autonomous yet — true per-account routing is the orchestrator's job.
     try {
       for (const agent of cfg.agents) {
-        const role = agent.role === "auto" ? "Agente" : agent.role
         await ctx.sdk.client.session.create({
           directory: s.directory,
-          title: `${role} · ${agent.account}`,
+          title: agentSessionTitle(agent),
         })
       }
     } catch (err) {
