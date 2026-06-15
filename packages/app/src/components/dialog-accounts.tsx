@@ -29,6 +29,23 @@ export function DialogAccounts() {
     return false
   }
 
+  // Remove an account from the app AND delete its isolated runtime dir on disk,
+  // so its stored credentials don't linger as an orphan (the dir is never reused
+  // — account ids are unique). Best-effort: if the on-disk delete fails we still
+  // drop the account so the UI matches the user's intent.
+  async function removeAccount(account: { id: string; provider: string }) {
+    try {
+      const root = await window.api?.getChaiRuntimeRoot?.()
+      if (root && window.api?.deleteAccountRuntime) {
+        const runtime = createAccountRuntime({ accountId: account.id, provider: account.provider }, { root })
+        await window.api.deleteAccountRuntime(runtime.profilePath)
+      }
+    } catch (err) {
+      console.warn("[chai] could not delete account runtime dir", err)
+    }
+    Accounts.remove(account.id)
+  }
+
   // Claude and Kimi run as their real CLI, so we log in with `claude login` /
   // `kimi login` in an embedded terminal using this account's isolated config
   // dir (both vendors disallow subscription OAuth in third-party apps). Same
@@ -154,7 +171,7 @@ export function DialogAccounts() {
                         Listo
                       </Button>
                     </Show>
-                    <Button type="button" variant="ghost" size="small" onClick={() => Accounts.remove(acc.id)}>
+                    <Button type="button" variant="ghost" size="small" onClick={() => removeAccount(acc)}>
                       <Icon name="trash" />
                     </Button>
                   </div>

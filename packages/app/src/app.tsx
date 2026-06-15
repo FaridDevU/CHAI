@@ -140,6 +140,7 @@ declare global {
       exportDebugLogs?: () => Promise<string>
       getChaiRuntimeRoot?: () => Promise<string>
       ensureRuntimeDir?: (dir: string) => Promise<string>
+      deleteAccountRuntime?: (dir: string) => Promise<string>
       openIsolatedSubscriptionLogin?: (input: {
         provider: "claude" | "codex"
         accountId: string

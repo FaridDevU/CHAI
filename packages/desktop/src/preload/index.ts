@@ -96,6 +96,7 @@ const api: ElectronAPI = {
     ipcRenderer.invoke("append-project-file", directory, relativePath, content),
   readProjectFile: (directory, relativePath) => ipcRenderer.invoke("read-project-file", directory, relativePath),
   ensureRuntimeDir: (dir) => ipcRenderer.invoke("ensure-runtime-dir", dir),
+  deleteAccountRuntime: (dir) => ipcRenderer.invoke("delete-account-runtime", dir),
   runClaudeAgent: (runId, spec) => ipcRenderer.invoke("run-claude-agent", runId, spec),
   cancelClaudeAgent: (runId) => ipcRenderer.invoke("cancel-claude-agent", runId),
   onClaudeAgentEvent: (callback) => {

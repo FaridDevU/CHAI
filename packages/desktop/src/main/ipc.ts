@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process"
-import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises"
+import { appendFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, relative } from "node:path"
 import { app, BrowserWindow, Notification, clipboard, dialog, ipcMain, shell } from "electron"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
@@ -131,6 +131,17 @@ export function registerIpcHandlers(deps: Deps) {
     const rel = relative(root, dir)
     if (rel.startsWith("..") || isAbsolute(rel)) throw new Error("Refusing to create a dir outside the CHAI runtime root")
     await mkdir(dir, { recursive: true })
+    return dir
+  })
+  // Delete an account's isolated runtime dir (CHAI: when a connected account is
+  // removed). Guarded to stay strictly inside the CHAI runtime root and to never
+  // be the root itself. force:true makes a missing dir a no-op.
+  ipcMain.handle("delete-account-runtime", async (_event: IpcMainInvokeEvent, dir: string) => {
+    const root = chaiRuntimeRoot()
+    const rel = relative(root, dir)
+    if (!rel || rel.startsWith("..") || isAbsolute(rel))
+      throw new Error("Refusing to delete a dir outside the CHAI runtime root")
+    await rm(dir, { recursive: true, force: true })
     return dir
   })
   ipcMain.handle("get-display-backend", () => deps.getDisplayBackend())
