@@ -1,11 +1,50 @@
 import spawn from "cross-spawn"
 import type { ChildProcess } from "node:child_process"
+import { existsSync } from "node:fs"
+import { homedir } from "node:os"
+import { delimiter, dirname, join } from "node:path"
 import { buildClaudeInvocation, buildKimiInvocation, parseClaudeStreamLine, parseKimiStreamLine } from "@chai/orchestrator"
 import type { ClaudeAgentSpec, ClaudeRunEvent, ClaudeRunResult } from "@chai/orchestrator"
 import { getLogger } from "./logging"
 
 // One child per run id, so a run can be cancelled by id.
 const running = new Map<string, ChildProcess>()
+
+/**
+ * Resolve the agent CLI to a runnable path WITHOUT relying on PATH. A desktop app
+ * launched from the GUI doesn't inherit the user's shell PATH, so `claude`/`kimi`
+ * installed by their official installers (e.g. ~/.kimi-code/bin/kimi.exe) are
+ * invisible to a bare spawn and fail with ENOENT. We probe the known install
+ * locations per platform and fall back to the bare command (PATH) only if none
+ * exist. Returns the command plus extra dirs to prepend to PATH so the CLI can
+ * find its own sibling tools (e.g. kimi ships fd.exe next to kimi.exe).
+ */
+export function resolveCliCommand(cli: "claude" | "kimi"): { command: string; extraPath: string[] } {
+  const home = homedir()
+  const win = process.platform === "win32"
+  const candidates =
+    cli === "kimi"
+      ? win
+        ? [join(home, ".kimi-code", "bin", "kimi.exe")]
+        : [join(home, ".kimi-code", "bin", "kimi")]
+      : win
+        ? [join(home, "AppData", "Roaming", "npm", "claude.cmd"), join(home, "AppData", "Roaming", "npm", "claude.exe")]
+        : [
+            join(home, ".claude", "local", "claude"),
+            "/opt/homebrew/bin/claude",
+            "/usr/local/bin/claude",
+            join(home, ".npm-global", "bin", "claude"),
+          ]
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return { command: candidate, extraPath: [dirname(candidate)] }
+  }
+  // Not found in a known location — let cross-spawn try PATH, but still widen
+  // PATH with the usual bin dirs in case the GUI launch dropped them.
+  const extraPath = win
+    ? [join(home, "AppData", "Roaming", "npm"), join(home, ".kimi-code", "bin")]
+    : ["/opt/homebrew/bin", "/usr/local/bin", join(home, ".npm-global", "bin")]
+  return { command: cli, extraPath }
+}
 
 /**
  * Spawn the real agent CLI (`claude` or `kimi`, chosen by spec.cli) headless for
@@ -22,13 +61,18 @@ export function runClaudeAgent(
   const isKimi = spec.cli === "kimi"
   const inv = isKimi ? buildKimiInvocation(spec) : buildClaudeInvocation(spec)
   const parseStreamLine = isKimi ? parseKimiStreamLine : parseClaudeStreamLine
+  // Resolve the CLI from its known install location (PATH-independent) and widen
+  // the child PATH so a GUI-launched app still finds it and its sibling tools.
+  const { command, extraPath } = resolveCliCommand(isKimi ? "kimi" : "claude")
+  const env: Record<string, string | undefined> = { ...process.env, ...inv.env }
+  if (extraPath.length) env.PATH = [...extraPath, env.PATH ?? env.Path ?? ""].filter(Boolean).join(delimiter)
 
   return new Promise<ClaudeRunResult>((resolve, reject) => {
     let child: ChildProcess
     try {
-      child = spawn(inv.command, inv.args, {
+      child = spawn(command, inv.args, {
         cwd: inv.cwd,
-        env: { ...process.env, ...inv.env },
+        env,
         windowsHide: true,
       })
     } catch (err) {
@@ -36,10 +80,10 @@ export function runClaudeAgent(
       return
     }
     running.set(runId, child)
-    // Diagnostics: log the command + isolated config dir (never the prompt) so a
-    // CLI failure like Kimi's "api error" can be traced to auth/flags/version.
+    // Diagnostics: log the resolved command + isolated config dir (never the
+    // prompt) so a CLI failure can be traced to path/auth/flags/version.
     getLogger()?.info(
-      `[agent ${runId}] launching ${inv.command} (${isKimi ? "kimi" : "claude"}) cwd=${inv.cwd} configDir=${
+      `[agent ${runId}] launching ${command} (${isKimi ? "kimi" : "claude"}) cwd=${inv.cwd} configDir=${
         inv.env?.KIMI_CODE_HOME ?? inv.env?.CLAUDE_CONFIG_DIR ?? "?"
       } args=${inv.args.filter((a) => a !== spec.prompt && !a.startsWith("[Rol")).join(" ")}`,
     )
@@ -83,7 +127,7 @@ export function runClaudeAgent(
       running.delete(runId)
       reject(
         new Error(
-          `No se pudo ejecutar '${inv.command}': ${err.message}. ¿Está instalado el CLI de ${isKimi ? "Kimi Code" : "Claude"}?`,
+          `No se pudo ejecutar '${command}': ${err.message}. ¿Está instalado el CLI de ${isKimi ? "Kimi Code" : "Claude"}?`,
         ),
       )
     })
@@ -95,10 +139,10 @@ export function runClaudeAgent(
       const isError = result?.isError ?? code !== 0
       const detail = stderr.trim()
       if (isError) {
-        getLogger()?.warn(`[agent ${runId}] ${inv.command} exit=${code} stderr=${detail.slice(0, 800) || "(vacío)"}`)
+        getLogger()?.warn(`[agent ${runId}] ${command} exit=${code} stderr=${detail.slice(0, 800) || "(vacío)"}`)
       }
       if (!result && !baseText && code !== 0) {
-        reject(new Error(detail || `${inv.command} terminó con código ${code}`))
+        reject(new Error(detail || `${command} terminó con código ${code}`))
         return
       }
       // On error, surface the CLI's stderr detail to the UI instead of letting a
