@@ -83,7 +83,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
     const opencodeId = OPENCODE_PROVIDER[agent.provider]
     if (opencodeId && connectedIds().has(opencodeId)) return { label: "Listo", tone: "ok" }
     const acc = Accounts.byId(agent.accountId)
-    if (acc?.status === "pending") return { label: "Pendiente de conexion", tone: "pending" }
+    if (acc?.status === "pending") return { label: "Pendiente de conexión", tone: "pending" }
     return { label: "No configurado", tone: "off" }
   }
 
@@ -246,7 +246,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                               {(s) => (
                                 <>
                                   <span>·</span>
-                                  <span class="text-icon-success-base">sesion activa · {relativeTime(s().updated)}</span>
+                                  <span class="text-icon-success-base">sesión activa · {relativeTime(s().updated)}</span>
                                 </>
                               )}
                             </Show>
@@ -298,7 +298,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                     />
                     <div class="flex items-center justify-between gap-2">
                       <span class="text-11-regular text-text-weak">
-                        Usa la cuenta seleccionada, su runtime y su sesion del proyecto.
+                        Usa la cuenta seleccionada, su runtime y su sesión del proyecto.
                       </span>
                       <Button
                         type="button"
@@ -339,7 +339,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                         <div class="rounded-md border border-border-weak-base px-4 py-8 text-center">
                           <div class="text-13-medium text-text-strong">Todavia no hay actividad</div>
                           <div class="text-12-regular text-text-weak mt-1">
-                            Inicia el equipo para abrir una sesion por agente. Aqui aparecera su actividad.
+                            Inicia el equipo para abrir una sesión por agente. Aquí aparecerá su actividad.
                           </div>
                         </div>
                       }

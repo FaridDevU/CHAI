@@ -641,7 +641,7 @@ export function DialogConnectProvider(props: {
                   when={methods().length > 0}
                   fallback={
                     <div class="text-14-regular text-text-base">
-                      Este proveedor todavia no tiene un metodo de conexion disponible en CHAI.
+                      Este proveedor todavía no tiene un método de conexión disponible en CHAI.
                     </div>
                   }
                 >

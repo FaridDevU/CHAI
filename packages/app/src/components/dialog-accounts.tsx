@@ -11,7 +11,7 @@ import { showToast } from "@/utils/toast"
 
 function statusLabel(status: AccountStatus) {
   if (status === "ready") return "Listo"
-  if (status === "pending") return "Pendiente de conexion"
+  if (status === "pending") return "Pendiente de conexión"
   return "No configurado"
 }
 
@@ -50,7 +50,7 @@ export function DialogAccounts() {
       env: runtime.env,
     })
     Accounts.setStatus(account.id, "pending")
-    showToast(`Se abrio un login aislado para ${account.label}. Cuando termines, marca la cuenta como lista.`)
+    showToast(`Se abrió un login aislado para ${account.label}. Cuando termines, marca la cuenta como lista.`)
     return true
   }
 
@@ -58,7 +58,7 @@ export function DialogAccounts() {
     if (await connectSubscription(account)) return
     const opencodeId = OPENCODE_PROVIDER[account.provider]
     if (!providerKnown(opencodeId)) {
-      showToast(`Conexion de ${providerLabel(account.provider)} todavia no disponible.`)
+      showToast(`Conexión de ${providerLabel(account.provider)} todavía no disponible.`)
       return
     }
     Accounts.setStatus(account.id, "pending")
@@ -87,7 +87,7 @@ export function DialogAccounts() {
     <Dialog title="Cuentas / Agentes" class="w-full max-w-[520px] mx-auto">
       <div class="flex flex-col gap-5 p-6 pt-0">
         <p class="text-12-regular text-text-weak">
-          Conecta las cuentas de IA que usaras en tus proyectos. Puedes anadir varias cuentas del mismo proveedor (p. ej. Claude 1, Claude 2).
+          Conecta las cuentas de IA que usarás en tus proyectos. Puedes añadir varias cuentas del mismo proveedor (p. ej. Claude 1, Claude 2).
         </p>
 
         <div class="flex flex-col gap-1.5">
@@ -95,7 +95,7 @@ export function DialogAccounts() {
             when={Accounts.list().length > 0}
             fallback={
               <div class="rounded-md border border-border-weak-base px-4 py-6 text-center text-12-regular text-text-weak">
-                Aun no tienes cuentas. Anade al menos una para empezar.
+                Aún no tienes cuentas. Añade al menos una para empezar.
               </div>
             }
           >
@@ -133,7 +133,7 @@ export function DialogAccounts() {
           when={adding()}
           fallback={
             <Button type="button" variant="secondary" size="large" onClick={() => setAdding(true)}>
-              <Icon name="plus" /> Anadir cuenta
+              <Icon name="plus" /> Añadir cuenta
             </Button>
           }
         >
@@ -171,7 +171,7 @@ export function DialogAccounts() {
                 Cancelar
               </Button>
               <Button type="button" variant="primary" size="large" onClick={add}>
-                Anadir
+                Añadir
               </Button>
             </div>
           </div>
