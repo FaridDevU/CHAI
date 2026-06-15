@@ -1,7 +1,66 @@
-import { Orchestrator, type MessageInput, type OrchestratorAgent, type Transport } from "@chai/orchestrator"
+import {
+  Orchestrator,
+  type ClaudeAgentSpec,
+  type ClaudeRunResult,
+  type MessageInput,
+  type OrchestratorAgent,
+  type Transport,
+} from "@chai/orchestrator"
 import { Identifier } from "@/utils/id"
 import { OPENCODE_PROVIDER, roleLabel, type TeamAgent, type TeamConfig } from "@/state/agents"
 import type { ServerSDK } from "@/context/server-sdk"
+
+/**
+ * Transport that runs each agent as the REAL `claude` CLI (headless) via the
+ * desktop runner: account isolated by CLAUDE_CONFIG_DIR (from its runtime),
+ * context scoped to the project dir, role/permissions/model threaded through.
+ * This is the legitimate subscription path (orchestrating the genuine CLI),
+ * replacing the opencode-session transport for Claude agents.
+ */
+export function createClaudeTransport(input: {
+  directory: string
+  runClaudeAgent: (runId: string, spec: ClaudeAgentSpec) => Promise<ClaudeRunResult>
+  byAccountId: (accountId: string) => TeamAgent | undefined
+  modelForAgent?: (agent: TeamAgent) => string | undefined
+  /** Prior session id per agent, to resume its thread for continuity. */
+  sessionForAgent?: (agent: TeamAgent) => string | undefined
+  /** Called with the agent's session id after a run, to persist continuity. */
+  onSession?: (agent: TeamAgent, sessionId: string) => void
+}): Transport {
+  return {
+    async deliver(agent, message, runtime): Promise<MessageInput> {
+      const teamAgent = input.byAccountId(agent.accountId)
+      if (!teamAgent) throw new Error(`No se encontró el agente ${agent.account}`)
+      if (teamAgent.provider !== "claude")
+        throw new Error(`El runner de Claude no soporta el proveedor ${teamAgent.provider} todavía`)
+
+      const configDir = runtime.env.CLAUDE_CONFIG_DIR ?? runtime.configPath
+      if (!configDir) throw new Error(`La cuenta ${teamAgent.account} no tiene un runtime aislado`)
+
+      const spec: ClaudeAgentSpec = {
+        configDir,
+        projectDir: input.directory,
+        prompt: message.text,
+        role: teamAgent.role === "auto" ? undefined : roleLabel(teamAgent.role),
+        permissions: teamAgent.permissions,
+        model: input.modelForAgent?.(teamAgent),
+        resumeSessionId: input.sessionForAgent?.(teamAgent),
+      }
+
+      const runId = `${agent.accountId}-${Date.now().toString(36)}`
+      const result = await input.runClaudeAgent(runId, spec)
+      if (result.sessionId) input.onSession?.(teamAgent, result.sessionId)
+
+      return {
+        from: agent.id,
+        to: message.from,
+        type: result.isError ? "error" : "respuesta",
+        text: result.text || (result.isError ? "El agente terminó con error." : "(sin respuesta)"),
+        data: { sessionId: result.sessionId, costUsd: result.costUsd, turns: result.turns },
+      }
+    },
+  }
+}
 
 export function toOrchestratorAgent(agent: TeamAgent, index: number, sessionId?: string): OrchestratorAgent {
   return {

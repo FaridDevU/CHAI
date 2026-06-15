@@ -5,6 +5,7 @@ import type { DesktopMenuAction } from "../desktop-menu"
 import { ServerConnection } from "./server"
 import type { WslServersPlatform } from "../wsl/types"
 import type { UpdaterPlatform } from "../updater"
+import type { ClaudeAgentSpec, ClaudeRunEvent, ClaudeRunResult } from "@chai/orchestrator"
 
 type PickerPaths = string | string[] | null
 type OpenDirectoryPickerOptions = { title?: string; multiple?: boolean }
@@ -65,6 +66,14 @@ type PlatformBase = {
   /** Read a file from inside a project directory, e.g. .chai/team.json (desktop
    *  only). relativePath must stay within directory. Resolves null if missing. */
   readProjectFile?(directory: string, relativePath: string): Promise<string | null>
+
+  /** Run the real `claude` CLI for one agent task (desktop only). Streams events
+   *  via onClaudeAgentEvent and resolves with the final result. */
+  runClaudeAgent?(runId: string, spec: ClaudeAgentSpec): Promise<ClaudeRunResult>
+  /** Cancel a running claude agent by run id (desktop only). */
+  cancelClaudeAgent?(runId: string): Promise<void>
+  /** Subscribe to streamed claude agent events; returns an unsubscribe fn. */
+  onClaudeAgentEvent?(callback: (payload: { runId: string; event: ClaudeRunEvent }) => void): () => void
 
   /** Storage mechanism, defaults to localStorage */
   storage?: (name?: string) => SyncStorage | AsyncStorage
