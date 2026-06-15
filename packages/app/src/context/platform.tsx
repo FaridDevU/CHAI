@@ -67,6 +67,10 @@ type PlatformBase = {
    *  only). relativePath must stay within directory. Resolves null if missing. */
   readProjectFile?(directory: string, relativePath: string): Promise<string | null>
 
+  /** Create an isolated account runtime dir (desktop only), so a login PTY can
+   *  cwd into it. Constrained to the CHAI runtime root. */
+  ensureRuntimeDir?(dir: string): Promise<string>
+
   /** Run the real `claude` CLI for one agent task (desktop only). Streams events
    *  via onClaudeAgentEvent and resolves with the final result. */
   runClaudeAgent?(runId: string, spec: ClaudeAgentSpec): Promise<ClaudeRunResult>

@@ -139,6 +139,7 @@ declare global {
       setTitlebar?: (theme: { mode: "light" | "dark" }) => Promise<void>
       exportDebugLogs?: () => Promise<string>
       getChaiRuntimeRoot?: () => Promise<string>
+      ensureRuntimeDir?: (dir: string) => Promise<string>
       openIsolatedSubscriptionLogin?: (input: {
         provider: "claude" | "codex"
         accountId: string

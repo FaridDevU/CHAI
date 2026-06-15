@@ -175,6 +175,10 @@ const createPlatform = (): Platform => {
       return window.api.readProjectFile(directory, relativePath)
     },
 
+    ensureRuntimeDir(dir) {
+      return window.api.ensureRuntimeDir(dir)
+    },
+
     runClaudeAgent(runId, spec) {
       return window.api.runClaudeAgent(runId, spec)
     },

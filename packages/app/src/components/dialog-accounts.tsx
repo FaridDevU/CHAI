@@ -29,29 +29,41 @@ export function DialogAccounts() {
     return false
   }
 
-  // Claude runs as the real `claude` CLI, so we log in with `claude login` inside
-  // this account's isolated config dir (Anthropic disallows subscription OAuth in
-  // third-party apps). Same configDir the Claude runner later uses.
+  // Claude runs as the real `claude` CLI, so we log in with `claude login` in an
+  // embedded terminal using this account's isolated config dir (Anthropic
+  // disallows subscription OAuth in third-party apps). Same configDir the Claude
+  // runner later uses.
   async function connectClaudeCli(account: { id: string; provider: string; label: string }) {
     const root = await window.api?.getChaiRuntimeRoot?.()
-    const openLogin = window.api?.openIsolatedSubscriptionLogin
-    if (!root || !openLogin) {
+    const ensureDir = window.api?.ensureRuntimeDir
+    if (!root || !ensureDir) {
       showToast("El login de Claude requiere la app de escritorio.")
       return
     }
     const runtime = createAccountRuntime({ accountId: account.id, provider: account.provider }, { root })
-    await openLogin({
-      provider: "claude",
-      accountId: account.id,
-      label: account.label,
-      profilePath: runtime.profilePath,
-      homePath: runtime.homePath,
-      configPath: runtime.configPath,
-      tempPath: runtime.tempPath,
-      env: runtime.env,
-    })
+    const configDir = runtime.env.CLAUDE_CONFIG_DIR ?? runtime.configPath
+    try {
+      // The login PTY cwds into the profile dir, so it must exist.
+      await ensureDir(runtime.profilePath)
+      await ensureDir(configDir)
+    } catch (err) {
+      showToast({
+        title: "No se pudo preparar el runtime de la cuenta",
+        description: err instanceof Error ? err.message : String(err),
+      })
+      return
+    }
     Accounts.setStatus(account.id, "pending")
-    showToast(`Se abrió 'claude login' aislado para ${account.label}. Cuando termines, marca la cuenta como Lista.`)
+    void import("@/components/dialog-claude-login").then((x) => {
+      void dialog.show(() => (
+        <x.DialogClaudeLogin
+          accountId={account.id}
+          label={account.label}
+          configDir={configDir}
+          profileDir={runtime.profilePath}
+        />
+      ))
+    })
   }
 
   // Connect an account: Claude via its isolated CLI login; other providers via

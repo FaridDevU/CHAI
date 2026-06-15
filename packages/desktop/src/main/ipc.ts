@@ -124,6 +124,15 @@ export function registerIpcHandlers(deps: Deps) {
     deps.setDefaultServerUrl(url),
   )
   ipcMain.handle("get-chai-runtime-root", () => chaiRuntimeRoot())
+  // Create an isolated account runtime dir (so a PTY can cwd into it). Guarded
+  // to stay within the CHAI runtime root.
+  ipcMain.handle("ensure-runtime-dir", async (_event: IpcMainInvokeEvent, dir: string) => {
+    const root = chaiRuntimeRoot()
+    const rel = relative(root, dir)
+    if (rel.startsWith("..") || isAbsolute(rel)) throw new Error("Refusing to create a dir outside the CHAI runtime root")
+    await mkdir(dir, { recursive: true })
+    return dir
+  })
   ipcMain.handle("get-display-backend", () => deps.getDisplayBackend())
   ipcMain.handle("set-display-backend", (_event: IpcMainInvokeEvent, backend: string | null) =>
     deps.setDisplayBackend(backend),
