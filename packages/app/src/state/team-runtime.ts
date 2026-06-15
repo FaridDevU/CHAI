@@ -212,6 +212,20 @@ export function getProjectTeamRuntime(team: TeamConfig, deps: ProjectTeamRuntime
   return runtime
 }
 
+/**
+ * Forget the cached runtime for a directory so the next getProjectTeamRuntime
+ * builds a fresh one (reloading state from disk). Used when a team is (re)started
+ * from the wizard, so a previous team's in-memory conversation/roles don't leak
+ * into the new one even when the same project folder is reused.
+ */
+export function dropProjectTeamRuntime(directory: string) {
+  const existing = runtimes.get(directory)
+  if (!existing) return
+  existing.dispose()
+  runtimes.delete(directory)
+  bumpRuntimesVersion((v) => v + 1)
+}
+
 export class ProjectTeamRuntime {
   private team: TeamConfig
   private deps: ProjectTeamRuntimeDeps
@@ -271,10 +285,29 @@ export class ProjectTeamRuntime {
     const current = this.orchestrator.agents().map((agent) => agent.accountId).join("\0")
     const next = team.agents.map((agent) => agent.accountId).join("\0")
     if (current === next) return
+    // Never swap the orchestrator out from under an in-flight run (onboarding /
+    // a team turn) — it would drop the live conversation and reset the feed.
+    if (this.runState() !== "idle") return
+    this.rebuildOrchestrator()
+  }
+
+  /**
+   * Recreate the orchestrator (e.g. after the agent set or roles change) WITHOUT
+   * losing the conversation so far: the current router messages are folded into
+   * loadedMessages first, so the timeline survives the rebuild instead of
+   * blanking out (a fresh orchestrator starts with an empty router).
+   */
+  private rebuildOrchestrator() {
+    const seen = new Set(this.loadedMessages.map((m) => m.id))
+    for (const m of this.orchestrator.messages()) {
+      if (seen.has(m.id)) continue
+      seen.add(m.id)
+      this.loadedMessages.push(m)
+    }
     this.orchestrator = this.createOrchestrator()
     this.initializeAgentStates()
-    this.syncMessages()
     this.subscribe()
+    this.syncMessages()
   }
 
   agents() {
@@ -392,6 +425,9 @@ export class ProjectTeamRuntime {
         })
         this.setAgentState(agent.accountId, result?.type === "error" ? "error" : "ready")
       }
+      // After everyone has answered CHAI, the agents talk to EACH OTHER to agree
+      // on distinct roles (always, so the user sees them coordinate).
+      await this.discussRoles(profiles)
       this.teamProfileValue = {
         projectName: this.team.projectName,
         directory: this.team.directory,
@@ -846,6 +882,12 @@ export class ProjectTeamRuntime {
     })
   }
 
+  /** Release subscriptions so the runtime can be dropped and rebuilt cleanly. */
+  dispose() {
+    this.unsubscribe?.()
+    this.unsubscribe = undefined
+  }
+
   private agentLabel(id: string) {
     if (id === "user") return "usuario"
     if (id === COORDINATOR) return "coordinador"
@@ -1031,20 +1073,119 @@ export class ProjectTeamRuntime {
     return this.enqueuePersist(TEAM_PROFILE_FILE, this.teamProfileValue)
   }
 
+  private profileRole(profile: TeamRuntimeTeamProfile, agent: TeamAgent): Role | undefined {
+    const p = profile.agents.find((item) => item.accountId === agent.accountId)
+    const text = [p?.summary, ...(p?.capabilities ?? []), ...(p?.bestTasks ?? [])].filter(Boolean).join("\n")
+    return p?.recommendedRole ?? inferRole(text, agent.provider)
+  }
+
+  /**
+   * Assign DISTINCT roles to the agents so two never share one (the bug where
+   * both became "Arquitecto"). Each agent keeps its preferred role if still free;
+   * otherwise it gets the next free role by priority. Fixed roles (hybrid mode)
+   * claim their slot first. Only repeats a role if there are more agents than
+   * roles. Returns accountId → role.
+   */
+  private assignDistinctRoles(prefs: { accountId: string; role: Role | undefined; fixed: boolean }[]): Map<string, Role> {
+    const order = ROLES.map((r) => r.id).filter((r) => r !== "auto")
+    const taken = new Set<Role>()
+    const result = new Map<string, Role>()
+    for (const p of prefs) {
+      if (p.fixed && p.role && p.role !== "auto") {
+        taken.add(p.role)
+        result.set(p.accountId, p.role)
+      }
+    }
+    for (const p of prefs) {
+      if (result.has(p.accountId)) continue
+      let role = p.role && p.role !== "auto" && !taken.has(p.role) ? p.role : undefined
+      if (!role) role = order.find((r) => !taken.has(r))
+      if (!role) role = p.role && p.role !== "auto" ? p.role : "fullstack"
+      taken.add(role)
+      result.set(p.accountId, role)
+    }
+    return result
+  }
+
+  /**
+   * Have the agents TALK TO EACH OTHER (not just to CHAI) to agree on who takes
+   * which role. Runs even when there's no clash — the user wants to see them
+   * coordinate. Each agent addresses the NEXT one with the running proposal and
+   * hears back, so the feed shows real "Kimi → Codex" / "Codex → Kimi" exchanges.
+   * Mutates profiles' recommendedRole; assignDistinctRoles still guarantees no
+   * two agents end up sharing a role.
+   */
+  private async discussRoles(profiles: TeamRuntimeAgentProfile[]) {
+    if (this.team.roleMode !== "auto" && this.team.roleMode !== "hybrid") return
+    const agents = this.team.agents
+    if (agents.length < 2) return
+
+    const roleOf = (accountId: string): Role | undefined => {
+      const p = profiles.find((x) => x.accountId === accountId)
+      if (!p) return undefined
+      return (
+        p.recommendedRole ??
+        inferRole([p.summary, ...(p.capabilities ?? []), ...(p.bestTasks ?? [])].filter(Boolean).join("\n"), p.provider)
+      )
+    }
+    const proposed = new Map<string, Role | undefined>(agents.map((a) => [a.accountId, roleOf(a.accountId)]))
+    const splitText = () => agents.map((a) => `${a.account}: ${roleLabel(proposed.get(a.accountId) ?? "auto")}`).join(", ")
+    const available = ROLES.map((r) => r.id).filter((r) => r !== "auto")
+
+    this.orchestrator.router.send({
+      from: COORDINATOR,
+      to: "user",
+      type: "info",
+      text: "El equipo va a conversar para repartirse los roles sin repetir. Propuesta inicial — " + splitText(),
+    })
+    this.syncMessages()
+
+    // Round-robin: each agent talks to the next, proposing the split and hearing back.
+    for (let i = 0; i < agents.length; i++) {
+      this.assertNotCancelled()
+      await this.waitIfPaused()
+      const speaker = agents[i]!
+      const listener = agents[(i + 1) % agents.length]!
+      if (speaker.accountId === listener.accountId) continue
+      const prompt = [
+        `Hola ${listener.account}, soy ${speaker.account}.`,
+        `Para no repetir roles en el equipo, propongo este reparto: ${splitText()}.`,
+        `¿Te queda bien tu rol propuesto (${roleLabel(proposed.get(listener.accountId) ?? "auto")})? Si prefieres otro, elígelo y explica brevemente por qué.`,
+        `Roles posibles: ${available.map(roleLabel).join(", ")}.`,
+        `Responde SOLO con JSON: {"agree": true|false, "recommendedRole": "<id>"}, donde <id> es uno de: ${available.join(", ")}.`,
+      ].join("\n")
+      this.setAgentState(listener.accountId, "working")
+      const reply = await this.dispatchWithPolicy(listener.accountId, prompt, {
+        from: speaker.accountId,
+        type: "pregunta",
+        data: { discussion: true },
+      })
+      this.setAgentState(listener.accountId, reply?.type === "error" ? "error" : "ready")
+      const parsed = reply ? parseOnboardingProfile(reply.text) : undefined
+      if (parsed?.recommendedRole && parsed.recommendedRole !== "auto") {
+        proposed.set(listener.accountId, parsed.recommendedRole)
+      }
+    }
+
+    // Carry the discussed picks into the profiles; assignDistinctRoles enforces uniqueness.
+    for (const p of profiles) {
+      const r = proposed.get(p.accountId)
+      if (r && r !== "auto") p.recommendedRole = r
+    }
+    this.syncMessages()
+  }
+
   private applyProfileRoles(profile: TeamRuntimeTeamProfile) {
     if (this.team.roleMode !== "auto" && this.team.roleMode !== "hybrid") return
+    const prefs = this.team.agents.map((agent) => ({
+      accountId: agent.accountId,
+      role: this.team.roleMode === "hybrid" && agent.role !== "auto" ? agent.role : this.profileRole(profile, agent),
+      fixed: this.team.roleMode === "hybrid" && agent.role !== "auto",
+    }))
+    const assignment = this.assignDistinctRoles(prefs)
     let changed = false
     const agents = this.team.agents.map((agent) => {
-      if (this.team.roleMode === "hybrid" && agent.role !== "auto") return agent
-      const agentProfile = profile.agents.find((item) => item.accountId === agent.accountId)
-      const profileText = [
-        agentProfile?.summary,
-        ...(agentProfile?.capabilities ?? []),
-        ...(agentProfile?.bestTasks ?? []),
-      ]
-        .filter(Boolean)
-        .join("\n")
-      const role = agentProfile?.recommendedRole ?? inferRole(profileText, agent.provider)
+      const role = assignment.get(agent.accountId)
       if (!role || role === agent.role) return agent
       changed = true
       return { ...agent, role }
@@ -1054,9 +1195,7 @@ export class ProjectTeamRuntime {
     this.team = { ...this.team, agents }
     void this.persistTeam()
     this.deps.onTeamUpdated?.(this.team)
-    this.orchestrator = this.createOrchestrator()
-    this.initializeAgentStates()
-    this.subscribe()
+    this.rebuildOrchestrator()
   }
 
   private persistTeam() {
