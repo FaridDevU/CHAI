@@ -184,7 +184,26 @@ const createPlatform = (): Platform => {
     },
 
     runClaudeAgent(runId, spec) {
-      return window.api.runClaudeAgent(runId, spec)
+      // Rebuild the spec as a guaranteed-plain object before it crosses the
+      // Electron IPC boundary. The spec is often assembled from Solid store
+      // values, whose arrays/objects are reactive proxies that structuredClone
+      // rejects with "An object could not be cloned". Copying every field into a
+      // fresh literal (and the permissions/addDirs into plain arrays) keeps the
+      // payload cloneable regardless of where the values came from.
+      const plain = {
+        cli: spec.cli,
+        configDir: spec.configDir,
+        projectDir: spec.projectDir,
+        prompt: spec.prompt,
+        role: spec.role,
+        model: spec.model,
+        permissions: spec.permissions ? [...spec.permissions] : undefined,
+        resumeSessionId: spec.resumeSessionId,
+        maxTurns: spec.maxTurns,
+        addDirs: spec.addDirs ? [...spec.addDirs] : undefined,
+        partialMessages: spec.partialMessages,
+      }
+      return window.api.runClaudeAgent(runId, plain)
     },
     cancelClaudeAgent(runId) {
       return window.api.cancelClaudeAgent(runId)
