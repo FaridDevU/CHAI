@@ -1,8 +1,8 @@
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
-import { For, Show, createEffect, createMemo, createSignal } from "solid-js"
-import { Orchestrator, type Message } from "@chai/orchestrator"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import { Orchestrator, type ClaudeRunEvent, type Message } from "@chai/orchestrator"
 import {
   Accounts,
   OPENCODE_PROVIDER,
@@ -18,7 +18,8 @@ import { useProviders } from "@/hooks/use-providers"
 import { useServerSDK } from "@/context/server-sdk"
 import { usePlatform } from "@/context/platform"
 import { DialogAccounts } from "@/components/dialog-accounts"
-import { createTeamTransport, toOrchestratorAgent } from "@/components/team-orchestrator"
+import { createClaudeTransport, createTeamTransport, toOrchestratorAgent } from "@/components/team-orchestrator"
+import { showToast } from "@/utils/toast"
 
 type AgentState = { label: string; tone: "ok" | "pending" | "off" }
 
@@ -27,6 +28,22 @@ export type SessionActivity = { id: string; title: string; updated: number }
 
 function permLabel(id: string) {
   return PERMISSIONS.find((p) => p.id === id)?.label ?? id
+}
+
+// A readable one-liner for a streamed claude run event (skips init/unknown).
+function claudeEventText(event: ClaudeRunEvent): string | undefined {
+  switch (event.type) {
+    case "text":
+      return event.text.trim() ? `💬 ${event.text.trim()}` : undefined
+    case "tool":
+      return `🔧 ${event.name}`
+    case "retry":
+      return `⏳ reintentando (${event.attempt}): ${event.error}`
+    case "result":
+      return event.isError ? "❌ terminó con error" : `✅ listo${event.costUsd != null ? ` · $${event.costUsd.toFixed(4)}` : ""}`
+    default:
+      return undefined
+  }
 }
 
 function relativeTime(ms: number): string {
@@ -62,6 +79,22 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
   const [sending, setSending] = createSignal(false)
   const [createdSessions, setCreatedSessions] = createSignal<Record<string, string>>({})
   const [comms, setComms] = createSignal<Message[]>([])
+  // Resume continuity for the real claude CLI: accountId -> last session id.
+  const [claudeSessions, setClaudeSessions] = createSignal<Record<string, string>>({})
+  // Live stream of the running claude agent (tool uses, retries, result).
+  const [liveFeed, setLiveFeed] = createSignal<{ label: string; text: string; time: number }[]>([])
+
+  onMount(() => {
+    const unsubscribe = platform.onClaudeAgentEvent?.(({ runId, event }) => {
+      const text = claudeEventText(event)
+      if (!text) return
+      // runId is `${accountId}-${base36ts}`; accountId may contain hyphens.
+      const accountId = runId.slice(0, runId.lastIndexOf("-"))
+      const agent = team()?.agents.find((a) => a.accountId === accountId)
+      setLiveFeed((current) => [...current.slice(-100), { label: agent?.account ?? "agente", text, time: Date.now() }])
+    })
+    if (unsubscribe) onCleanup(unsubscribe)
+  })
 
   // Pull the latest team straight from .chai/team.json (the source of truth).
   createEffect(() => {
@@ -128,17 +161,36 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
     const target = currentTeam.agents.find((agent) => agent.accountId === targetId)
     if (!target) return
 
+    // Claude agents run as the real claude CLI (desktop only); others use the
+    // opencode-session transport.
+    const useClaude = target.provider === "claude"
+    if (useClaude && !platform.runClaudeAgent) {
+      showToast({ title: "El runner de Claude requiere la app de escritorio." })
+      return
+    }
+
     setSelectedAgentId(target.accountId)
     setSending(true)
     try {
-      const transport = createTeamTransport({
-        serverSDK,
-        directory: currentTeam.directory,
-        sessionForAgent: sessionIdForAgent,
-        createSessionForAgent,
-        byAccountId: (accountId) => currentTeam.agents.find((agent) => agent.accountId === accountId),
-        modelForProvider,
-      })
+      const byAccountId = (accountId: string) => currentTeam.agents.find((agent) => agent.accountId === accountId)
+      const transport =
+        useClaude && platform.runClaudeAgent
+          ? createClaudeTransport({
+              directory: currentTeam.directory,
+              runClaudeAgent: platform.runClaudeAgent,
+              byAccountId,
+              sessionForAgent: (agent) => claudeSessions()[agent.accountId],
+              onSession: (agent, sessionId) =>
+                setClaudeSessions((current) => ({ ...current, [agent.accountId]: sessionId })),
+            })
+          : createTeamTransport({
+              serverSDK,
+              directory: currentTeam.directory,
+              sessionForAgent: sessionIdForAgent,
+              createSessionForAgent,
+              byAccountId,
+              modelForProvider,
+            })
       const orchestrator = new Orchestrator(
         {
           projectName: currentTeam.projectName,
@@ -150,6 +202,11 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
       await orchestrator.coordinator.dispatch(target.accountId, text, { from: "user", type: "pregunta" })
       setComms((current) => [...current, ...orchestrator.messages()])
       setMessage("")
+    } catch (err) {
+      showToast({
+        title: "No se pudo enviar al agente",
+        description: err instanceof Error ? err.message : String(err),
+      })
     } finally {
       setSending(false)
     }
@@ -323,6 +380,22 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                                 {item.from} {"->"} {item.to} - {item.type}
                               </div>
                               <div class="text-12-regular text-text-strong whitespace-pre-wrap">{item.text}</div>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </div>
+                  </Show>
+
+                  <Show when={liveFeed().length > 0}>
+                    <div class="flex flex-col gap-1.5">
+                      <span class="text-11-medium text-text-weak">Eventos en vivo</span>
+                      <div class="flex max-h-48 flex-col gap-1 overflow-auto rounded-md border border-border-weak-base p-2">
+                        <For each={liveFeed()}>
+                          {(item) => (
+                            <div class="flex items-baseline gap-2">
+                              <span class="text-10-medium text-text-weak shrink-0">{item.label}</span>
+                              <span class="text-12-regular text-text-strong whitespace-pre-wrap">{item.text}</span>
                             </div>
                           )}
                         </For>
