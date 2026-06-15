@@ -99,6 +99,11 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
   // Live stream of the running claude agent (tool uses, retries, result).
   const [liveFeed, setLiveFeed] = createSignal<{ label: string; text: string; time: number }[]>([])
   const [taskFilter, setTaskFilter] = createSignal<TaskFilter>("all")
+  // When opened from the generic "Equipo" entry (no directory), the user first
+  // picks a project from the list; that choice lives here. The team we show is
+  // the directory passed in, or the picked one.
+  const [pickedDir, setPickedDir] = createSignal(props.directory ?? "")
+  const effectiveDir = createMemo(() => props.directory ?? (pickedDir() || undefined))
 
   onMount(() => {
     const unsubscribe = platform.onClaudeAgentEvent?.(({ runId, event }) => {
@@ -128,13 +133,15 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
 
   // Pull the latest team straight from .chai/team.json (the source of truth).
   createEffect(() => {
-    if (props.directory && platform.readProjectFile) void Teams.hydrate(props.directory, platform.readProjectFile)
+    const dir = effectiveDir()
+    if (dir && platform.readProjectFile) void Teams.hydrate(dir, platform.readProjectFile)
   })
 
   const teams = createMemo(() => Teams.list())
-  const team = createMemo<TeamConfig | undefined>(() =>
-    props.directory ? Teams.get(props.directory) : teams()[0],
-  )
+  const team = createMemo<TeamConfig | undefined>(() => {
+    const dir = effectiveDir()
+    return dir ? Teams.get(dir) : undefined
+  })
   const connectedIds = createMemo(() => new Set(providers.connected().map((p) => p.id)))
 
   const activity = createMemo(() => [...(props.sessions?.() ?? [])].sort((a, b) => b.updated - a.updated))
@@ -340,6 +347,12 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
     if (item.data?.onboarding && (item.from === "coordinator" || item.from === "user")) {
       return { speaker: "CHAI", kind: "chai", body: "Preséntate: ¿cuáles son tus fortalezas, tus límites y qué rol te queda mejor?" }
     }
+    // A question/prompt carries a JSON *schema example* (e.g. {"recommendedRole":"<id>"}).
+    // Never parse it as if it were a real reply — show its human text, stripped of
+    // the "Responde SOLO con JSON…" tail. Only replies (respuesta/entrega/…) get humanized.
+    if (item.type === "pregunta") {
+      return { speaker, kind, body: stripJsonInstructions(item.text) }
+    }
     const friendly = friendlyFromJson(item.text)
     if (friendly) return { speaker, kind, body: friendly }
     return { speaker, kind, body: stripJsonInstructions(item.text) }
@@ -430,8 +443,46 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
   }
 
   return (
-    <Dialog title="Equipo del proyecto" class="w-full max-w-[600px] mx-auto">
-      <div class="flex flex-col gap-4 p-6 pt-0">
+    <Dialog title="Equipo del proyecto" size="large" class="w-full max-w-[600px] mx-auto">
+      <div class="flex flex-col gap-4 p-6 pt-0 flex-1 min-h-0">
+        <Show
+          when={effectiveDir()}
+          fallback={
+            <Show
+              when={teams().length > 0}
+              fallback={
+                <div class="flex flex-col items-center gap-3 rounded-md border border-border-weak-base px-4 py-10 text-center">
+                  <div class="text-13-medium text-text-strong">Aún no hay un equipo configurado</div>
+                  <div class="text-12-regular text-text-weak">
+                    Crea un proyecto con "Nuevo proyecto" y elige tus agentes para formar un equipo.
+                  </div>
+                </div>
+              }
+            >
+              {/* Project picker: one entry per project that has a team. */}
+              <div class="flex flex-col gap-2">
+                <span class="text-12-medium text-text-weak">Elige un proyecto para ver y gestionar su equipo</span>
+                <For each={teams()}>
+                  {(tc) => (
+                    <button
+                      type="button"
+                      class="flex items-center justify-between gap-2 rounded-md border border-border-weak-base px-3 py-2.5 text-left transition-colors hover:border-border-strong"
+                      onClick={() => setPickedDir(tc.directory)}
+                    >
+                      <div class="flex min-w-0 flex-col">
+                        <span class="text-13-medium text-text-strong truncate">{tc.projectName}</span>
+                        <span class="text-11-regular text-text-weak truncate">{tc.directory}</span>
+                      </div>
+                      <span class="shrink-0 text-11-medium text-text-weak">
+                        {tc.agents.length} {tc.agents.length === 1 ? "agente" : "agentes"}
+                      </span>
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
+          }
+        >
         <Show
           when={team()}
           fallback={
@@ -446,9 +497,21 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
           {(t) => (
             <>
               <div class="flex items-center justify-between">
-                <div class="flex flex-col min-w-0">
-                  <span class="text-14-medium text-text-strong truncate">{t().projectName}</span>
-                  <span class="text-11-regular text-text-weak truncate">{t().directory}</span>
+                <div class="flex items-center gap-2 min-w-0">
+                  <Show when={!props.directory}>
+                    <button
+                      type="button"
+                      class="shrink-0 rounded-md border border-border-weak-base px-2 py-1 text-11-medium text-text-weak hover:text-text-strong"
+                      onClick={() => setPickedDir("")}
+                      title="Volver a proyectos"
+                    >
+                      ← Proyectos
+                    </button>
+                  </Show>
+                  <div class="flex flex-col min-w-0">
+                    <span class="text-14-medium text-text-strong truncate">{t().projectName}</span>
+                    <span class="text-11-regular text-text-weak truncate">{t().directory}</span>
+                  </div>
                 </div>
                 <span class="text-11-medium text-text-weak shrink-0">
                   {t().agents.length} {t().agents.length === 1 ? "agente" : "agentes"} ·{" "}
@@ -483,7 +546,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
               </div>
 
               {/* scrollable tab body so long timelines/boards stay reachable */}
-              <div class="flex flex-col gap-4 overflow-y-auto max-h-[60vh] pr-1 -mr-1">
+              <div class="flex flex-col gap-4 overflow-y-auto flex-1 min-h-0 pr-1 -mr-1">
               {/* AGENTS tab */}
               <Show when={tab() === "agents"}>
                 <div class="flex flex-col gap-2">
@@ -672,7 +735,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                       </Show>
                     </div>
                     <div
-                      class="overflow-y-auto rounded-md border border-border-weak-base p-3 font-mono text-12-regular h-[52vh]"
+                      class="overflow-y-auto overscroll-contain rounded-md border border-border-weak-base p-3 font-mono text-12-regular h-[260px] min-h-[160px]"
                       style={{ background: "#0b0e14" }}
                     >
                       <Show
@@ -689,10 +752,21 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                           {(item) => {
                             const line = chatLine(item)
                             return (
-                              <div class="whitespace-pre-wrap py-0.5 leading-relaxed">
-                                <span style={{ color: speakerColor(item.from), "font-weight": 600 }}>{line.speaker}</span>
-                                <span style={{ color: "#6b7280" }}> ›&nbsp;</span>
-                                <span style={{ color: line.kind === "error" ? "#f87171" : "#cbd5e1" }}>{line.body}</span>
+                              <div class="border-b border-[#1a2130] py-2.5 first:pt-0 last:border-b-0">
+                                {/* A quién va dirigido el mensaje (estilo "respondiendo a"):
+                                    se ve atenuado arriba quién habla y a quién. */}
+                                <div class="mb-1 flex items-center gap-1.5 text-10-regular" style={{ color: "#5b6472" }}>
+                                  <span style={{ color: speakerColor(item.from), "font-weight": 600 }}>
+                                    {speakerName(item.from)}
+                                  </span>
+                                  <span style={{ color: "#3f4756" }}>→</span>
+                                  <span style={{ color: speakerColor(item.to), "font-weight": 600 }}>
+                                    {speakerName(item.to)}
+                                  </span>
+                                </div>
+                                <div class="whitespace-pre-wrap leading-relaxed">
+                                  <span style={{ color: line.kind === "error" ? "#f87171" : "#cbd5e1" }}>{line.body}</span>
+                                </div>
                               </div>
                             )
                           }}
@@ -858,6 +932,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
               </div>
             </>
           )}
+        </Show>
         </Show>
 
         <div class="flex justify-end">
