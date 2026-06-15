@@ -4,7 +4,7 @@ import { Dialog } from "@opencode-ai/ui/dialog"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { Icon } from "@opencode-ai/ui/icon"
 import { For, Show, createMemo, createSignal } from "solid-js"
-import { createAccountRuntime } from "@chai/orchestrator"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 import { Accounts, OPENCODE_PROVIDER, PROVIDERS, providerLabel, type AccountStatus } from "@/state/agents"
 import { useProviders } from "@/hooks/use-providers"
 import { showToast } from "@/utils/toast"
@@ -29,33 +29,11 @@ export function DialogAccounts() {
     return false
   }
 
-  async function connectSubscription(account: { id: string; provider: string; label: string }) {
-    if (account.provider !== "claude" && account.provider !== "codex") return false
-    const root = await window.api?.getChaiRuntimeRoot?.()
-    const openLogin = window.api?.openIsolatedSubscriptionLogin
-    if (!root || !openLogin) {
-      showToast("La ventana desktop necesita reabrirse para cargar el login aislado nuevo.")
-      return true
-    }
-
-    const runtime = createAccountRuntime({ accountId: account.id, provider: account.provider }, { root })
-    await openLogin({
-      provider: account.provider,
-      accountId: account.id,
-      label: account.label,
-      profilePath: runtime.profilePath,
-      homePath: runtime.homePath,
-      configPath: runtime.configPath,
-      tempPath: runtime.tempPath,
-      env: runtime.env,
-    })
-    Accounts.setStatus(account.id, "pending")
-    showToast(`Se abrió un login aislado para ${account.label}. Cuando termines, marca la cuenta como lista.`)
-    return true
-  }
-
-  async function connect(account: { id: string; provider: string; label: string }) {
-    if (await connectSubscription(account)) return
+  // Connect a subscription account through opencode's real OAuth flow, tagging
+  // the credential with this account's id so the server registers a dedicated
+  // per-account provider ("anthropic#<accountId>"). Two accounts of the same
+  // provider thus get distinct credentials instead of sharing one login.
+  function connect(account: { id: string; provider: string; label: string }) {
     const opencodeId = OPENCODE_PROVIDER[account.provider]
     if (!providerKnown(opencodeId)) {
       showToast(`Conexión de ${providerLabel(account.provider)} todavía no disponible.`)
@@ -69,10 +47,18 @@ export function DialogAccounts() {
     })
   }
 
-  function isConnected(account: { provider: string }) {
-    if ("status" in account && account.status === "ready") return true
-    const opencodeId = OPENCODE_PROVIDER[account.provider]
-    return !!opencodeId && connectedIds().has(opencodeId)
+  // The account's dedicated provider id, e.g. "anthropic#<accountId>".
+  function accountProviderId(account: { id: string; provider: string }) {
+    const base = OPENCODE_PROVIDER[account.provider]
+    if (!base) return undefined
+    return ProviderV2.accountProviderID(ProviderV2.ID.make(base), account.id)
+  }
+
+  // Connected per account: the server only exposes this account's provider once
+  // its own credential is stored, so two accounts connect independently.
+  function isConnected(account: { id: string; provider: string }) {
+    const id = accountProviderId(account)
+    return !!id && connectedIds().has(id)
   }
 
   function add() {
@@ -111,12 +97,7 @@ export function DialogAccounts() {
                   <div class="flex items-center gap-1 shrink-0">
                     <Show when={!isConnected(acc)}>
                       <Button type="button" variant="secondary" size="small" onClick={() => connect(acc)}>
-                        {acc.status === "pending" ? "Abrir login" : "Conectar"}
-                      </Button>
-                    </Show>
-                    <Show when={acc.status === "pending"}>
-                      <Button type="button" variant="secondary" size="small" onClick={() => Accounts.setStatus(acc.id, "ready")}>
-                        Listo
+                        {acc.status === "pending" ? "Reintentar" : "Conectar"}
                       </Button>
                     </Show>
                     <Button type="button" variant="ghost" size="small" onClick={() => Accounts.remove(acc.id)}>
