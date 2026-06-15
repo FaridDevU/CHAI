@@ -9,9 +9,9 @@
     localStorage.removeItem("opencode-theme-css-dark")
   }
 
-  var scheme = localStorage.getItem("opencode-color-scheme") || "system"
-  var isDark = scheme === "dark" || (scheme === "system" && matchMedia("(prefers-color-scheme: dark)").matches)
-  var mode = isDark ? "dark" : "light"
+  // CHAI: light-only color scheme. Ignore any stored/system preference.
+  var isDark = false
+  var mode = "light"
 
   document.documentElement.dataset.theme = themeId
   document.documentElement.dataset.colorScheme = mode

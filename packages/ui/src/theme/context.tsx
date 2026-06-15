@@ -174,15 +174,19 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
   name: "Theme",
   init: (props: { defaultTheme?: string; onThemeApplied?: (theme: DesktopTheme, mode: "light" | "dark") => void }) => {
     const themeId = normalize(read(STORAGE_KEYS.THEME_ID) ?? props.defaultTheme) ?? "oc-2"
-    const colorScheme = (read(STORAGE_KEYS.COLOR_SCHEME) as ColorScheme | null) ?? "system"
-    const mode = colorScheme === "system" ? getSystemMode() : colorScheme
+    // CHAI: the app ships light-only. Force scheme/mode to light and ignore any
+    // stored or system preference (see setColorScheme + oc-theme-preload.js).
+    const colorScheme: ColorScheme = "light"
+    const mode: "light" | "dark" = "light"
     const [store, setStore] = createStore({
       themes: {
         "oc-2": oc2Theme,
       } as Record<string, DesktopTheme>,
       themeId,
-      colorScheme,
-      mode,
+      // Keep the store field types wide (the app forces light, but preview /
+      // system-media code paths still reference the other values).
+      colorScheme: colorScheme as ColorScheme,
+      mode: mode as "light" | "dark",
       previewThemeId: null as string | null,
       previewScheme: null as ColorScheme | null,
     })
@@ -243,8 +247,9 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
         })
       }
       if (e.key === STORAGE_KEYS.COLOR_SCHEME && e.newValue) {
-        setStore("colorScheme", e.newValue as ColorScheme)
-        setStore("mode", e.newValue === "system" ? getSystemMode() : (e.newValue as "light" | "dark"))
+        // CHAI: light-only — never adopt a dark/system value from another window.
+        setStore("colorScheme", "light")
+        setStore("mode", "light")
       }
     }
 
@@ -260,14 +265,14 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
 
       const rawTheme = read(STORAGE_KEYS.THEME_ID)
       const savedTheme = normalize(rawTheme ?? props.defaultTheme) ?? "oc-2"
-      const savedScheme = (read(STORAGE_KEYS.COLOR_SCHEME) as ColorScheme | null) ?? "system"
       if (rawTheme && rawTheme !== savedTheme) {
         write(STORAGE_KEYS.THEME_ID, savedTheme)
         clear()
       }
       if (savedTheme !== store.themeId) setStore("themeId", savedTheme)
-      if (savedScheme !== store.colorScheme) setStore("colorScheme", savedScheme)
-      setStore("mode", savedScheme === "system" ? getSystemMode() : savedScheme)
+      // CHAI: light-only — always land on light regardless of stored scheme.
+      setStore("colorScheme", "light")
+      setStore("mode", "light")
       void load(savedTheme).then((theme) => {
         if (!theme || store.themeId !== savedTheme) return
         cacheThemeVariants(theme, savedTheme)
@@ -303,10 +308,11 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       })
     }
 
-    const setColorScheme = (scheme: ColorScheme) => {
-      setStore("colorScheme", scheme)
-      write(STORAGE_KEYS.COLOR_SCHEME, scheme)
-      setStore("mode", scheme === "system" ? getSystemMode() : scheme)
+    const setColorScheme = (_scheme: ColorScheme) => {
+      // CHAI: light-only — ignore the requested scheme and always apply light.
+      setStore("colorScheme", "light")
+      write(STORAGE_KEYS.COLOR_SCHEME, "light")
+      setStore("mode", "light")
     }
 
     return {
