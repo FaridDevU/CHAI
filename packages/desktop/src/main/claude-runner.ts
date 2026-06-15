@@ -2,6 +2,7 @@ import spawn from "cross-spawn"
 import type { ChildProcess } from "node:child_process"
 import { buildClaudeInvocation, buildKimiInvocation, parseClaudeStreamLine, parseKimiStreamLine } from "@chai/orchestrator"
 import type { ClaudeAgentSpec, ClaudeRunEvent, ClaudeRunResult } from "@chai/orchestrator"
+import { getLogger } from "./logging"
 
 // One child per run id, so a run can be cancelled by id.
 const running = new Map<string, ChildProcess>()
@@ -35,6 +36,13 @@ export function runClaudeAgent(
       return
     }
     running.set(runId, child)
+    // Diagnostics: log the command + isolated config dir (never the prompt) so a
+    // CLI failure like Kimi's "api error" can be traced to auth/flags/version.
+    getLogger()?.info(
+      `[agent ${runId}] launching ${inv.command} (${isKimi ? "kimi" : "claude"}) cwd=${inv.cwd} configDir=${
+        inv.env?.KIMI_CODE_HOME ?? inv.env?.CLAUDE_CONFIG_DIR ?? "?"
+      } args=${inv.args.filter((a) => a !== spec.prompt && !a.startsWith("[Rol")).join(" ")}`,
+    )
 
     let stdout = ""
     let stderr = ""
@@ -83,15 +91,23 @@ export function runClaudeAgent(
     child.on("close", (code: number | null) => {
       running.delete(runId)
       if (stdout.trim()) handleLine(stdout) // flush a trailing partial line
-      const text = result?.text ?? textBuf
-      if (!result && !text && code !== 0) {
-        reject(new Error(stderr.trim() || `${inv.command} terminó con código ${code}`))
+      const baseText = result?.text ?? textBuf
+      const isError = result?.isError ?? code !== 0
+      const detail = stderr.trim()
+      if (isError) {
+        getLogger()?.warn(`[agent ${runId}] ${inv.command} exit=${code} stderr=${detail.slice(0, 800) || "(vacío)"}`)
+      }
+      if (!result && !baseText && code !== 0) {
+        reject(new Error(detail || `${inv.command} terminó con código ${code}`))
         return
       }
+      // On error, surface the CLI's stderr detail to the UI instead of letting a
+      // bare "api error" stand alone — so the real cause (auth/flags) is visible.
+      const text = isError && detail ? [baseText, detail].filter(Boolean).join(" — ").slice(0, 600) : baseText || ""
       resolve({
         sessionId: result?.sessionId ?? initSessionId,
-        text: text || "",
-        isError: result?.isError ?? code !== 0,
+        text,
+        isError,
         costUsd: result?.costUsd,
         turns: result?.turns,
         exitCode: code,

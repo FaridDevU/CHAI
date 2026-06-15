@@ -317,11 +317,13 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
       item.type === "error" ? "error" : item.from === "user" ? "you" : item.from === "coordinator" ? "chai" : "agent"
     if (item.type === "error") {
       const raw = (item.text ?? "").trim()
-      const showDetail = !!raw && !/api error/i.test(raw) && raw.length < 160
+      const authish = /unauthor|401|403|\blogin\b|sign in|inicia sesi|token|api key|not authenticated|credential|api error/i.test(raw)
+      const hint = authish ? " (parece que la cuenta no está conectada: ve a Cuentas y completa el login)" : ""
+      const detail = raw ? raw.slice(0, 240) : ""
       return {
         speaker,
         kind,
-        body: showDetail ? `No pudo responder: ${raw}` : "No pudo responder (revisa su conexión o inicio de sesión).",
+        body: detail ? `No pudo responder: ${detail}${hint}` : "No pudo responder (revisa su conexión o inicio de sesión).",
       }
     }
     if (item.data?.onboarding && (item.from === "coordinator" || item.from === "user")) {
