@@ -2,7 +2,7 @@ import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
-import { Orchestrator, type ClaudeRunEvent, type Message } from "@chai/orchestrator"
+import { type ClaudeRunEvent } from "@chai/orchestrator"
 import {
   Accounts,
   OPENCODE_PROVIDER,
@@ -19,10 +19,27 @@ import { useProviders } from "@/hooks/use-providers"
 import { useServerSDK } from "@/context/server-sdk"
 import { usePlatform } from "@/context/platform"
 import { DialogAccounts } from "@/components/dialog-accounts"
-import { createClaudeTransport, createTeamTransport, toOrchestratorAgent } from "@/components/team-orchestrator"
+import { getProjectTeamRuntime } from "@/state/team-runtime"
 import { showToast } from "@/utils/toast"
 
 type AgentState = { label: string; tone: "ok" | "pending" | "off" }
+const runtimeStateLabel = {
+  ready: "Listo",
+  working: "Trabajando",
+  waiting: "Esperando",
+  error: "Error",
+  timeout: "Tiempo agotado",
+  offline: "Desconectado",
+} as const
+
+const TASK_FILTERS = [
+  { id: "all", label: "Todas" },
+  { id: "in_progress", label: "En curso" },
+  { id: "pending", label: "Pendientes" },
+  { id: "done", label: "Hechas" },
+  { id: "failed", label: "Fallidas" },
+] as const
+type TaskFilter = (typeof TASK_FILTERS)[number]["id"]
 
 // A project session that backs one of the team's agents (created at "Iniciar equipo").
 export type SessionActivity = { id: string; title: string; updated: number }
@@ -79,11 +96,9 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
   const [message, setMessage] = createSignal("")
   const [sending, setSending] = createSignal(false)
   const [createdSessions, setCreatedSessions] = createSignal<Record<string, string>>({})
-  const [comms, setComms] = createSignal<Message[]>([])
-  // Resume continuity for the real claude CLI: accountId -> last session id.
-  const [claudeSessions, setClaudeSessions] = createSignal<Record<string, string>>({})
   // Live stream of the running claude agent (tool uses, retries, result).
   const [liveFeed, setLiveFeed] = createSignal<{ label: string; text: string; time: number }[]>([])
+  const [taskFilter, setTaskFilter] = createSignal<TaskFilter>("all")
 
   onMount(() => {
     const unsubscribe = platform.onClaudeAgentEvent?.(({ runId, event }) => {
@@ -160,6 +175,42 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
     return session.id
   }
 
+  const runtime = createMemo(() => {
+    const currentTeam = team()
+    if (!currentTeam) return
+    return getProjectTeamRuntime(currentTeam, {
+      serverSDK,
+      runClaudeAgent: platform.runClaudeAgent,
+      cancelClaudeAgent: platform.cancelClaudeAgent,
+      sessionForAgent: sessionIdForAgent,
+      createSessionForAgent,
+      modelForProvider,
+      readProjectFile: platform.readProjectFile,
+      writeProjectFile: platform.writeProjectFile,
+      appendProjectFile: platform.appendProjectFile,
+      onTeamUpdated: Teams.save,
+    })
+  })
+
+  const comms = createMemo(() => runtime()?.messages() ?? [])
+  const runtimeStates = createMemo(() => runtime()?.agentStates() ?? {})
+  const tasks = createMemo(() => runtime()?.tasks() ?? [])
+  const runState = createMemo(() => runtime()?.runState() ?? "idle")
+  const teamProfile = createMemo(() => runtime()?.teamProfile())
+  const synthesis = createMemo(() => runtime()?.synthesis())
+  const permissionRequests = createMemo(() => runtime()?.permissionRequests() ?? [])
+  const filteredTasks = createMemo(() => {
+    const filter = taskFilter()
+    const all = [...tasks()].reverse()
+    return filter === "all" ? all : all.filter((task) => task.status === filter)
+  })
+
+  function agentLabel(accountId?: string) {
+    if (!accountId) return "Sin asignar"
+    const agent = team()?.agents.find((a) => a.accountId === accountId)
+    return agent ? `${agent.account} · ${roleLabel(agent.role)}` : accountId
+  }
+
   async function sendToAgent() {
     const currentTeam = team()
     if (!currentTeam || sending()) return
@@ -170,10 +221,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
     const target = currentTeam.agents.find((agent) => agent.accountId === targetId)
     if (!target) return
 
-    // Claude/Kimi agents run as their real CLI (desktop only); others use the
-    // opencode-session transport.
-    const useClaude = isCliProvider(target.provider)
-    if (useClaude && !platform.runClaudeAgent) {
+    if (isCliProvider(target.provider) && !platform.runClaudeAgent) {
       showToast({ title: "El runner de CLI (Claude/Kimi) requiere la app de escritorio." })
       return
     }
@@ -181,35 +229,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
     setSelectedAgentId(target.accountId)
     setSending(true)
     try {
-      const byAccountId = (accountId: string) => currentTeam.agents.find((agent) => agent.accountId === accountId)
-      const transport =
-        useClaude && platform.runClaudeAgent
-          ? createClaudeTransport({
-              directory: currentTeam.directory,
-              runClaudeAgent: platform.runClaudeAgent,
-              byAccountId,
-              sessionForAgent: (agent) => claudeSessions()[agent.accountId],
-              onSession: (agent, sessionId) =>
-                setClaudeSessions((current) => ({ ...current, [agent.accountId]: sessionId })),
-            })
-          : createTeamTransport({
-              serverSDK,
-              directory: currentTeam.directory,
-              sessionForAgent: sessionIdForAgent,
-              createSessionForAgent,
-              byAccountId,
-              modelForProvider,
-            })
-      const orchestrator = new Orchestrator(
-        {
-          projectName: currentTeam.projectName,
-          directory: currentTeam.directory,
-          agents: currentTeam.agents.map((agent, index) => toOrchestratorAgent(agent, index, sessionIdForAgent(agent))),
-        },
-        { transport },
-      )
-      await orchestrator.coordinator.dispatch(target.accountId, text, { from: "user", type: "pregunta" })
-      setComms((current) => [...current, ...orchestrator.messages()])
+      await runtime()?.sendToAgent(target.accountId, text)
       setMessage("")
     } catch (err) {
       showToast({
@@ -218,6 +238,60 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
       })
     } finally {
       setSending(false)
+    }
+  }
+
+  async function sendToTeam() {
+    const currentTeam = team()
+    if (!currentTeam || sending()) return
+    const text = message().trim()
+    if (!text) return
+    if (currentTeam.agents.some((agent) => isCliProvider(agent.provider)) && !platform.runClaudeAgent) {
+      showToast({ title: "Los agentes Claude/Kimi requieren la app de escritorio." })
+      return
+    }
+
+    setSending(true)
+    try {
+      await runtime()?.sendToTeam(text)
+      setMessage("")
+    } catch (err) {
+      showToast({
+        title: "No se pudo enviar al equipo",
+        description: err instanceof Error ? err.message : String(err),
+      })
+    } finally {
+      setSending(false)
+    }
+  }
+
+  function pauseTeam() {
+    runtime()?.pause()
+  }
+
+  function resumeTeam() {
+    runtime()?.resume()
+  }
+
+  async function cancelTeam() {
+    try {
+      await runtime()?.cancelActiveRuns()
+    } catch (err) {
+      showToast({
+        title: "No se pudo cancelar el equipo",
+        description: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  async function runOnboarding() {
+    try {
+      await runtime()?.runOnboarding()
+    } catch (err) {
+      showToast({
+        title: "No se pudo completar el onboarding",
+        description: err instanceof Error ? err.message : String(err),
+      })
     }
   }
 
@@ -279,7 +353,15 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                 <div class="flex flex-col gap-2">
                   <For each={t().agents}>
                     {(agent, i) => {
-                      const st = agentState(agent)
+                      const runtimeState = runtimeStates()[agent.accountId]
+                      const st =
+                        runtimeState === "working"
+                          ? { label: runtimeStateLabel.working, tone: "pending" as const }
+                          : runtimeState === "waiting"
+                            ? { label: runtimeStateLabel.waiting, tone: "pending" as const }
+                            : runtimeState === "error"
+                              ? { label: runtimeStateLabel.error, tone: "off" as const }
+                              : agentState(agent)
                       return (
                         <div class="flex flex-col gap-2 rounded-md border border-border-weak-base p-3">
                           <div class="flex items-center justify-between">
@@ -317,14 +399,25 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                               )}
                             </Show>
                           </div>
-                          <div class="flex flex-wrap gap-1">
-                            <For each={agent.permissions}>
-                              {(p) => (
-                                <span class="text-10-regular px-1.5 py-0.5 rounded bg-surface-base-hover text-text-weak">
-                                  {permLabel(p)}
-                                </span>
-                              )}
-                            </For>
+                          <div class="flex items-center justify-between gap-2">
+                            <div class="flex flex-wrap gap-1">
+                              <For each={agent.permissions}>
+                                {(p) => (
+                                  <span class="text-10-regular px-1.5 py-0.5 rounded bg-surface-base-hover text-text-weak">
+                                    {permLabel(p)}
+                                  </span>
+                                )}
+                              </For>
+                            </div>
+                            <Show when={runtimeState === "error" || runtimeState === "timeout" || runtimeState === "offline"}>
+                              <button
+                                type="button"
+                                class="shrink-0 text-10-medium px-2 py-0.5 rounded border border-border-weak-base text-text-weak hover:text-text-strong"
+                                onClick={() => runtime()?.reconnectAgent(agent.accountId)}
+                              >
+                                Reconectar
+                              </button>
+                            </Show>
                           </div>
                         </div>
                       )
@@ -340,8 +433,51 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
               <Show when={tab() === "comms"}>
                 <div class="flex flex-col gap-3">
                   <div class="flex flex-col gap-2 rounded-md border border-border-weak-base p-3">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="rounded bg-surface-base-hover px-1.5 py-0.5 text-10-medium text-text-weak">
+                        {runState()}
+                      </span>
+                      <div class="flex items-center gap-1.5">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="small"
+                          onClick={runOnboarding}
+                          disabled={runState() !== "idle"}
+                        >
+                          Onboarding
+                        </Button>
+                        <Show
+                          when={runState() === "paused"}
+                          fallback={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="small"
+                              onClick={pauseTeam}
+                              disabled={runState() !== "running"}
+                            >
+                              Pausar
+                            </Button>
+                          }
+                        >
+                          <Button type="button" variant="secondary" size="small" onClick={resumeTeam}>
+                            Reanudar
+                          </Button>
+                        </Show>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="small"
+                          onClick={cancelTeam}
+                          disabled={runState() !== "running" && runState() !== "paused"}
+                        >
+                          Cancelar
+                        </Button>
+                      </div>
+                    </div>
                     <div class="flex flex-col gap-1.5">
-                      <span class="text-11-medium text-text-weak">Enviar a agente</span>
+                      <span class="text-11-medium text-text-weak">Agente directo</span>
                       <select
                         class="rounded-md border border-border-weak-base bg-transparent px-2 py-1.5 text-12-regular text-text-strong"
                         value={selectedAgentId() || t().agents[0]?.accountId}
@@ -360,23 +496,206 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                       class="min-h-20 resize-y rounded-md border border-border-weak-base bg-transparent px-3 py-2 text-12-regular text-text-strong outline-none focus:border-border-strong"
                       value={message()}
                       onInput={(event) => setMessage(event.currentTarget.value)}
-                      placeholder="Mensaje para probar el router del equipo"
+                      placeholder="Mensaje para el equipo"
                     />
                     <div class="flex items-center justify-between gap-2">
                       <span class="text-11-regular text-text-weak">
-                        Usa la cuenta seleccionada, su runtime y su sesión del proyecto.
+                        Enviar al equipo enruta automaticamente entre agentes.
                       </span>
-                      <Button
-                        type="button"
-                        variant="primary"
-                        size="small"
-                        onClick={sendToAgent}
-                        disabled={sending() || !message().trim()}
-                      >
-                        {sending() ? "Enviando..." : "Enviar"}
-                      </Button>
+                      <div class="flex items-center gap-1.5">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="small"
+                          onClick={sendToAgent}
+                          disabled={sending() || !message().trim()}
+                        >
+                          Enviar al agente
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="primary"
+                          size="small"
+                          onClick={sendToTeam}
+                          disabled={sending() || !message().trim()}
+                        >
+                          {sending() ? "Enviando..." : "Enviar al equipo"}
+                        </Button>
+                      </div>
                     </div>
                   </div>
+
+                  <Show when={teamProfile()}>
+                    {(profile) => (
+                      <div class="flex flex-col gap-1.5">
+                        <span class="text-11-medium text-text-weak">Perfil del equipo</span>
+                        <div class="flex max-h-40 flex-col gap-1 overflow-auto rounded-md border border-border-weak-base p-2">
+                          <For each={profile().agents}>
+                            {(agent) => (
+                              <div class="rounded border border-border-weak-base px-2 py-1.5">
+                                <div class="text-10-medium text-text-weak">
+                                  {agent.account} - {roleLabel(agent.recommendedRole ?? agent.role)}
+                                </div>
+                                <div class="text-12-regular text-text-strong whitespace-pre-wrap">{agent.summary}</div>
+                                <Show when={agent.capabilities?.length}>
+                                  <div class="mt-1 text-10-regular text-text-weak">
+                                    Puede: {agent.capabilities?.join(", ")}
+                                  </div>
+                                </Show>
+                                <Show when={agent.bestTasks?.length}>
+                                  <div class="mt-1 text-10-regular text-text-weak">
+                                    Mejor para: {agent.bestTasks?.join(", ")}
+                                  </div>
+                                </Show>
+                                <Show when={agent.limits?.length}>
+                                  <div class="mt-1 text-10-regular text-text-weak">
+                                    Limites: {agent.limits?.join(", ")}
+                                  </div>
+                                </Show>
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                    )}
+                  </Show>
+
+                  {/* Pending permission approvals raised by agents */}
+                  <Show when={permissionRequests().length > 0}>
+                    <div class="flex flex-col gap-1.5">
+                      <span class="text-11-medium text-text-weak">Permisos solicitados</span>
+                      <div class="flex flex-col gap-1 rounded-md border border-border-weak-base p-2">
+                        <For each={permissionRequests()}>
+                          {(request) => (
+                            <div class="flex items-center justify-between gap-2 rounded border border-border-weak-base px-2 py-1.5">
+                              <div class="flex min-w-0 flex-col">
+                                <span class="truncate text-12-regular text-text-strong">
+                                  {agentLabel(request.accountId)} pide {permLabel(request.permission)}
+                                </span>
+                                <Show when={request.reason}>
+                                  <span class="text-10-regular text-text-weak truncate">{request.reason}</span>
+                                </Show>
+                              </div>
+                              <div class="flex shrink-0 items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  class="text-10-medium px-2 py-0.5 rounded border border-border-weak-base text-icon-success-base"
+                                  onClick={() => runtime()?.resolvePermissionRequest(request.id, true)}
+                                >
+                                  Aprobar
+                                </button>
+                                <button
+                                  type="button"
+                                  class="text-10-medium px-2 py-0.5 rounded border border-border-weak-base text-text-weak"
+                                  onClick={() => runtime()?.resolvePermissionRequest(request.id, false)}
+                                >
+                                  Rechazar
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </div>
+                  </Show>
+
+                  {/* Consolidated result of the last team round */}
+                  <Show when={synthesis()}>
+                    {(s) => (
+                      <div class="flex flex-col gap-1.5">
+                        <span class="text-11-medium text-text-weak">Sintesis del equipo</span>
+                        <div class="flex flex-col gap-1.5 rounded-md border border-border-weak-base p-3">
+                          <div class="text-12-regular text-text-strong whitespace-pre-wrap">{s().summary}</div>
+                          <Show when={s().filesTouched.length}>
+                            <div class="text-10-regular text-text-weak">Archivos: {s().filesTouched.join(", ")}</div>
+                          </Show>
+                          <Show when={s().tests.length}>
+                            <div class="text-10-regular text-text-weak">Pruebas: {s().tests.join(", ")}</div>
+                          </Show>
+                          <Show when={s().blockers.length}>
+                            <div class="text-10-regular text-icon-error-base">Bloqueos: {s().blockers.join("; ")}</div>
+                          </Show>
+                          <Show when={s().nextActions.length}>
+                            <div class="text-10-regular text-text-weak">Siguiente: {s().nextActions.join(", ")}</div>
+                          </Show>
+                        </div>
+                      </div>
+                    )}
+                  </Show>
+
+                  {/* Operational task board: filter, reassign, complete/reopen */}
+                  <Show when={tasks().length > 0}>
+                    <div class="flex flex-col gap-1.5">
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="text-11-medium text-text-weak">Tablero de tareas</span>
+                        <div class="flex items-center gap-1">
+                          <For each={TASK_FILTERS}>
+                            {(filter) => (
+                              <button
+                                type="button"
+                                classList={{
+                                  "text-10-medium px-1.5 py-0.5 rounded": true,
+                                  "bg-surface-base-hover text-text-strong": taskFilter() === filter.id,
+                                  "text-text-weak hover:text-text-strong": taskFilter() !== filter.id,
+                                }}
+                                onClick={() => setTaskFilter(filter.id)}
+                              >
+                                {filter.label}
+                              </button>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                      <div class="flex max-h-48 flex-col gap-1 overflow-auto rounded-md border border-border-weak-base p-2">
+                        <For each={filteredTasks()}>
+                          {(task) => (
+                            <div class="flex flex-col gap-1.5 rounded border border-border-weak-base px-2 py-1.5">
+                              <div class="flex items-center justify-between gap-2">
+                                <span class="truncate text-12-regular text-text-strong">{task.title}</span>
+                                <span class="shrink-0 rounded bg-surface-base-hover px-1.5 py-0.5 text-10-medium text-text-weak">
+                                  {task.status}
+                                </span>
+                              </div>
+                              <div class="flex flex-wrap items-center gap-1.5">
+                                <select
+                                  class="rounded border border-border-weak-base bg-transparent px-1.5 py-0.5 text-10-regular text-text-weak"
+                                  value={task.assignedTo ?? ""}
+                                  onChange={(event) =>
+                                    runtime()?.reassignTask(task.id, event.currentTarget.value || undefined)
+                                  }
+                                >
+                                  <option value="">Sin asignar</option>
+                                  <For each={t().agents}>
+                                    {(agent) => <option value={agent.accountId}>{agentLabel(agent.accountId)}</option>}
+                                  </For>
+                                </select>
+                                <Show
+                                  when={task.status !== "done"}
+                                  fallback={
+                                    <button
+                                      type="button"
+                                      class="text-10-medium px-2 py-0.5 rounded border border-border-weak-base text-text-weak"
+                                      onClick={() => runtime()?.setTaskStatus(task.id, "in_progress")}
+                                    >
+                                      Reabrir
+                                    </button>
+                                  }
+                                >
+                                  <button
+                                    type="button"
+                                    class="text-10-medium px-2 py-0.5 rounded border border-border-weak-base text-icon-success-base"
+                                    onClick={() => runtime()?.setTaskStatus(task.id, "done")}
+                                  >
+                                    Completar
+                                  </button>
+                                </Show>
+                              </div>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </div>
+                  </Show>
 
                   <Show when={comms().length > 0}>
                     <div class="flex flex-col gap-1.5">
