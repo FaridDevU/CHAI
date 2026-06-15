@@ -7,15 +7,16 @@ import {
   type Transport,
 } from "@chai/orchestrator"
 import { Identifier } from "@/utils/id"
-import { OPENCODE_PROVIDER, roleLabel, type TeamAgent, type TeamConfig } from "@/state/agents"
+import { OPENCODE_PROVIDER, isCliProvider, roleLabel, type TeamAgent, type TeamConfig } from "@/state/agents"
 import type { ServerSDK } from "@/context/server-sdk"
 
 /**
- * Transport that runs each agent as the REAL `claude` CLI (headless) via the
- * desktop runner: account isolated by CLAUDE_CONFIG_DIR (from its runtime),
- * context scoped to the project dir, role/permissions/model threaded through.
- * This is the legitimate subscription path (orchestrating the genuine CLI),
- * replacing the opencode-session transport for Claude agents.
+ * Transport that runs each agent as its REAL CLI (`claude` or `kimi`, headless)
+ * via the desktop runner: account isolated by its runtime config dir
+ * (CLAUDE_CONFIG_DIR / KIMI_CODE_HOME), context scoped to the project dir,
+ * role/permissions/model threaded through. This is the legitimate subscription
+ * path (orchestrating the genuine CLI), replacing the opencode-session transport
+ * for these providers.
  */
 export function createClaudeTransport(input: {
   directory: string
@@ -31,13 +32,18 @@ export function createClaudeTransport(input: {
     async deliver(agent, message, runtime): Promise<MessageInput> {
       const teamAgent = input.byAccountId(agent.accountId)
       if (!teamAgent) throw new Error(`No se encontró el agente ${agent.account}`)
-      if (teamAgent.provider !== "claude")
-        throw new Error(`El runner de Claude no soporta el proveedor ${teamAgent.provider} todavía`)
+      if (!isCliProvider(teamAgent.provider))
+        throw new Error(`El runner de CLI no soporta el proveedor ${teamAgent.provider} todavía`)
 
-      const configDir = runtime.env.CLAUDE_CONFIG_DIR ?? runtime.configPath
+      // Each CLI reads its identity from a different env var.
+      const configDir =
+        teamAgent.provider === "kimi"
+          ? runtime.env.KIMI_CODE_HOME ?? runtime.configPath
+          : runtime.env.CLAUDE_CONFIG_DIR ?? runtime.configPath
       if (!configDir) throw new Error(`La cuenta ${teamAgent.account} no tiene un runtime aislado`)
 
       const spec: ClaudeAgentSpec = {
+        cli: teamAgent.provider === "kimi" ? "kimi" : "claude",
         configDir,
         projectDir: input.directory,
         prompt: message.text,

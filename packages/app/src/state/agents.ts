@@ -25,6 +25,15 @@ export function providerLabel(id: string) {
   return PROVIDERS.find((p) => p.id === id)?.label ?? id
 }
 
+// Providers that connect + run as their own real CLI (the sanctioned
+// subscription path) instead of an opencode provider/OAuth: Claude (`claude`)
+// and Kimi (`kimi`). Their readiness is the account status the user confirms
+// after the CLI login, and their agent runs go through the desktop CLI runner.
+export const CLI_PROVIDERS = ["claude", "kimi"] as const
+export function isCliProvider(provider: string): provider is (typeof CLI_PROVIDERS)[number] {
+  return (CLI_PROVIDERS as readonly string[]).includes(provider)
+}
+
 // Maps CHAI's provider buckets to the underlying opencode provider id used by the
 // real connect flow. Empty = no direct opencode mapping yet.
 export const OPENCODE_PROVIDER: Record<string, string> = {

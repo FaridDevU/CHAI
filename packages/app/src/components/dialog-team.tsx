@@ -9,6 +9,7 @@ import {
   PERMISSIONS,
   Teams,
   agentSessionTitle,
+  isCliProvider,
   providerLabel,
   roleLabel,
   type TeamAgent,
@@ -113,6 +114,14 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
   const sessionIdForAgent = (agent: TeamAgent) => createdSessions()[agent.accountId] ?? sessionForAgent(agent)?.id
 
   function agentState(agent: TeamAgent): AgentState {
+    // Claude/Kimi connect via their own CLI login, so their readiness is the
+    // account status the user confirms (not an opencode connected provider).
+    if (isCliProvider(agent.provider)) {
+      const acc = Accounts.byId(agent.accountId)
+      if (acc?.status === "ready") return { label: "Listo", tone: "ok" }
+      if (acc?.status === "pending") return { label: "Pendiente de conexión", tone: "pending" }
+      return { label: "No configurado", tone: "off" }
+    }
     const opencodeId = OPENCODE_PROVIDER[agent.provider]
     if (opencodeId && connectedIds().has(opencodeId)) return { label: "Listo", tone: "ok" }
     const acc = Accounts.byId(agent.accountId)
@@ -161,11 +170,11 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
     const target = currentTeam.agents.find((agent) => agent.accountId === targetId)
     if (!target) return
 
-    // Claude agents run as the real claude CLI (desktop only); others use the
+    // Claude/Kimi agents run as their real CLI (desktop only); others use the
     // opencode-session transport.
-    const useClaude = target.provider === "claude"
+    const useClaude = isCliProvider(target.provider)
     if (useClaude && !platform.runClaudeAgent) {
-      showToast({ title: "El runner de Claude requiere la app de escritorio." })
+      showToast({ title: "El runner de CLI (Claude/Kimi) requiere la app de escritorio." })
       return
     }
 

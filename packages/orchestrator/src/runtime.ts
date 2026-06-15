@@ -75,6 +75,25 @@ export function createAccountRuntime(
     } satisfies AccountRuntime
   }
 
+  if (agent.provider === "kimi") {
+    return {
+      accountId: agent.accountId,
+      provider: agent.provider,
+      profilePath,
+      homePath,
+      configPath,
+      tempPath,
+      env: {
+        ...commonEnv,
+        // Kimi Code reads its config/identity/sessions from KIMI_CODE_HOME
+        // (default ~/.kimi-code); scoping it per account isolates the login.
+        KIMI_CODE_HOME: joinPath(configPath, "kimi"),
+      },
+      isolation: "home",
+      isolated: true,
+    } satisfies AccountRuntime
+  }
+
   if (agent.provider === "claude") {
     const isolation = opts.claudeIsolation ?? "home"
     const isolated = isolation !== "unsupported"

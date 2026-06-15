@@ -24,9 +24,11 @@ export {
   parseClaudeStreamLine,
 } from "./claude-runner"
 export type {
+  AgentCli,
   ClaudeAgentSpec,
   ClaudeInvocation,
   ClaudeRunEvent,
   ClaudeRunResult,
   ClaudePermissionMode,
 } from "./claude-runner"
+export { buildKimiInvocation, parseKimiStreamEvent, parseKimiStreamLine } from "./kimi-runner"

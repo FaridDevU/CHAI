@@ -11,8 +11,14 @@
 
 export type ClaudePermissionMode = "default" | "acceptEdits" | "dontAsk" | "bypassPermissions" | "plan"
 
+/** Which CLI backs this agent run. Defaults to "claude". See kimi-runner.ts. */
+export type AgentCli = "claude" | "kimi"
+
 export interface ClaudeAgentSpec {
-  /** Isolated CLAUDE_CONFIG_DIR for this account — its identity/login. */
+  /** Which CLI to run (claude | kimi). Defaults to "claude" when omitted. */
+  cli?: AgentCli
+  /** Isolated config/home dir for this account — its identity/login.
+   *  Maps to CLAUDE_CONFIG_DIR (claude) or KIMI_CODE_HOME (kimi). */
   configDir: string
   /** Project working directory — Claude scopes its transcript to this path. */
   projectDir: string

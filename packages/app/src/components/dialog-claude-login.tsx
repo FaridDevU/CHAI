@@ -8,16 +8,37 @@ import { Terminal } from "@/components/terminal"
 import { Accounts } from "@/state/agents"
 import type { LocalPTY } from "@/context/terminal"
 
-// In-app `claude login` for a Claude account: runs the real CLI in an embedded
-// terminal (sidecar PTY) with this account's isolated CLAUDE_CONFIG_DIR — the
-// same dir the Claude runner uses — so the login lands where the agent reads it.
-export function DialogClaudeLogin(props: { accountId: string; label: string; configDir: string; profileDir: string }) {
+type CliProvider = "claude" | "kimi"
+
+type LoginProps = {
+  accountId: string
+  label: string
+  configDir: string
+  profileDir: string
+  /** Which CLI to log in. Defaults to "claude" for back-compat. */
+  provider?: CliProvider
+}
+
+// Per-CLI login command + the env var that points it at this account's isolated
+// config dir (the same dir the agent runner reads). `kimi login` uses an RFC 8628
+// device-code flow; `claude login` opens the browser. Both are non-TUI prompts
+// that run fine inside the embedded terminal.
+const CLI = {
+  claude: { name: "Claude", command: "claude login", envKey: "CLAUDE_CONFIG_DIR" },
+  kimi: { name: "Kimi", command: "kimi login", envKey: "KIMI_CODE_HOME" },
+} as const
+
+// In-app CLI login for a Claude/Kimi account: runs the real CLI in an embedded
+// terminal (sidecar PTY) with this account's isolated config dir — so the login
+// lands where the agent reads it.
+export function DialogClaudeLogin(props: LoginProps) {
+  const cli = CLI[props.provider ?? "claude"]
   return (
-    <Dialog title={`Conectar Claude · ${props.label}`} class="w-full max-w-[720px] mx-auto">
+    <Dialog title={`Conectar ${cli.name} · ${props.label}`} class="w-full max-w-[720px] mx-auto">
       {/* Route through the server's default instance (empty directory ->
           process.cwd on the server), which is already running, instead of the
           isolated runtime dir (an empty folder with no instance). The PTY still
-          runs claude in the runtime dir via its own cwd + CLAUDE_CONFIG_DIR. */}
+          runs the CLI in the runtime dir via its own cwd + config-dir env. */}
       <SDKProvider directory="">
         <ClaudeLoginInner {...props} />
       </SDKProvider>
@@ -25,31 +46,33 @@ export function DialogClaudeLogin(props: { accountId: string; label: string; con
   )
 }
 
-function ClaudeLoginInner(props: { accountId: string; label: string; configDir: string; profileDir: string }) {
+function ClaudeLoginInner(props: LoginProps) {
   const sdk = useSDK()
   const dialog = useDialog()
+  const cli = CLI[props.provider ?? "claude"]
   const [pty, setPty] = createSignal<LocalPTY>()
   const [error, setError] = createSignal<string>()
 
   onMount(() => {
     // node-pty spawns the command directly (no PATHEXT), so on Windows we must
-    // go through cmd.exe for `claude` to resolve to claude.cmd. The command is
-    // fixed (no user input), so the shell string is safe.
+    // go through cmd.exe for `claude`/`kimi` to resolve to their .cmd shim. The
+    // command is fixed (no user input), so the shell string is safe.
     const isWindows = navigator.userAgent.includes("Windows")
-    const command = isWindows ? "cmd.exe" : "claude"
-    const args = isWindows ? ["/d", "/s", "/c", "claude login"] : ["login"]
+    const [bin] = cli.command.split(" ")
+    const command = isWindows ? "cmd.exe" : bin
+    const args = isWindows ? ["/d", "/s", "/c", cli.command] : cli.command.split(" ").slice(1)
     sdk.client.pty
       .create({
         command,
         args,
         cwd: props.profileDir,
-        env: { CLAUDE_CONFIG_DIR: props.configDir },
-        title: `claude login · ${props.label}`,
+        env: { [cli.envKey]: props.configDir },
+        title: `${cli.command} · ${props.label}`,
       } as Parameters<typeof sdk.client.pty.create>[0])
       .then((res: { data?: { id?: string } }) => {
         const id = res.data?.id
         if (!id) throw new Error("No se pudo crear la terminal de login")
-        setPty({ id, title: `claude login · ${props.label}`, titleNumber: 0 })
+        setPty({ id, title: `${cli.command} · ${props.label}`, titleNumber: 0 })
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
   })
@@ -62,8 +85,9 @@ function ClaudeLoginInner(props: { accountId: string; label: string; configDir: 
   return (
     <div class="flex flex-col gap-4 p-6 pt-0">
       <p class="text-12-regular text-text-weak">
-        Inicia sesión con tu cuenta de Claude en la terminal de abajo (se abrirá tu navegador). Cuando el CLI confirme el
-        inicio de sesión, pulsa <span class="text-text-strong">Marcar como conectada</span>.
+        Inicia sesión con tu cuenta de {cli.name} en la terminal de abajo (se abrirá tu navegador / código de
+        dispositivo). Cuando el CLI confirme el inicio de sesión, pulsa{" "}
+        <span class="text-text-strong">Marcar como conectada</span>.
       </p>
 
       <Show when={error()}>

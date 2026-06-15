@@ -5,7 +5,7 @@ import { TextField } from "@opencode-ai/ui/text-field"
 import { Icon } from "@opencode-ai/ui/icon"
 import { For, Show, createMemo, createSignal } from "solid-js"
 import { accountProviderId, createAccountRuntime } from "@chai/orchestrator"
-import { Accounts, OPENCODE_PROVIDER, PROVIDERS, providerLabel, type AccountStatus } from "@/state/agents"
+import { Accounts, OPENCODE_PROVIDER, PROVIDERS, isCliProvider, providerLabel, type AccountStatus } from "@/state/agents"
 import { useProviders } from "@/hooks/use-providers"
 import { showToast } from "@/utils/toast"
 
@@ -29,19 +29,22 @@ export function DialogAccounts() {
     return false
   }
 
-  // Claude runs as the real `claude` CLI, so we log in with `claude login` in an
-  // embedded terminal using this account's isolated config dir (Anthropic
-  // disallows subscription OAuth in third-party apps). Same configDir the Claude
-  // runner later uses.
-  async function connectClaudeCli(account: { id: string; provider: string; label: string }) {
+  // Claude and Kimi run as their real CLI, so we log in with `claude login` /
+  // `kimi login` in an embedded terminal using this account's isolated config
+  // dir (both vendors disallow subscription OAuth in third-party apps). Same
+  // configDir the CLI runner later uses.
+  async function connectCliLogin(account: { id: string; provider: string; label: string }) {
     const root = await window.api?.getChaiRuntimeRoot?.()
     const ensureDir = window.api?.ensureRuntimeDir
     if (!root || !ensureDir) {
-      showToast("El login de Claude requiere la app de escritorio.")
+      showToast("El login por CLI (Claude/Kimi) requiere la app de escritorio.")
       return
     }
     const runtime = createAccountRuntime({ accountId: account.id, provider: account.provider }, { root })
-    const configDir = runtime.env.CLAUDE_CONFIG_DIR ?? runtime.configPath
+    const configDir =
+      account.provider === "kimi"
+        ? runtime.env.KIMI_CODE_HOME ?? runtime.configPath
+        : runtime.env.CLAUDE_CONFIG_DIR ?? runtime.configPath
     try {
       // The login PTY cwds into the profile dir, so it must exist.
       await ensureDir(runtime.profilePath)
@@ -57,6 +60,7 @@ export function DialogAccounts() {
     void import("@/components/dialog-claude-login").then((x) => {
       void dialog.show(() => (
         <x.DialogClaudeLogin
+          provider={account.provider === "kimi" ? "kimi" : "claude"}
           accountId={account.id}
           label={account.label}
           configDir={configDir}
@@ -66,12 +70,12 @@ export function DialogAccounts() {
     })
   }
 
-  // Connect an account: Claude via its isolated CLI login; other providers via
-  // opencode's per-account OAuth (tagged with the account id so the server
+  // Connect an account: Claude/Kimi via their isolated CLI login; other providers
+  // via opencode's per-account OAuth (tagged with the account id so the server
   // registers a dedicated provider "openai#<accountId>").
   function connect(account: { id: string; provider: string; label: string }) {
-    if (account.provider === "claude") {
-      void connectClaudeCli(account)
+    if (isCliProvider(account.provider)) {
+      void connectCliLogin(account)
       return
     }
     const opencodeId = OPENCODE_PROVIDER[account.provider]
@@ -94,11 +98,12 @@ export function DialogAccounts() {
     return accountProviderId(base, account.id)
   }
 
-  // Connected per account. Claude's CLI login can't be detected from the server,
-  // so it relies on the status the user confirms after `claude login`. Other
-  // providers are connected once the server exposes their per-account provider.
+  // Connected per account. Claude/Kimi CLI login can't be detected from the
+  // server, so they rely on the status the user confirms after `claude login` /
+  // `kimi login`. Other providers are connected once the server exposes their
+  // per-account provider.
   function isConnected(account: { id: string; provider: string }) {
-    if (account.provider === "claude") return Accounts.byId(account.id)?.status === "ready"
+    if (isCliProvider(account.provider)) return Accounts.byId(account.id)?.status === "ready"
     const id = providerIdFor(account)
     return !!id && connectedIds().has(id)
   }
@@ -142,7 +147,7 @@ export function DialogAccounts() {
                         {acc.status === "pending" ? "Reintentar" : "Conectar"}
                       </Button>
                     </Show>
-                    <Show when={acc.provider === "claude" && acc.status === "pending"}>
+                    <Show when={isCliProvider(acc.provider) && acc.status === "pending"}>
                       <Button type="button" variant="primary" size="small" onClick={() => Accounts.setStatus(acc.id, "ready")}>
                         Listo
                       </Button>

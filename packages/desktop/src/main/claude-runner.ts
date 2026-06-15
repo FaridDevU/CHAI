@@ -1,24 +1,26 @@
 import spawn from "cross-spawn"
 import type { ChildProcess } from "node:child_process"
-import { buildClaudeInvocation, parseClaudeStreamLine } from "@chai/orchestrator"
+import { buildClaudeInvocation, buildKimiInvocation, parseClaudeStreamLine, parseKimiStreamLine } from "@chai/orchestrator"
 import type { ClaudeAgentSpec, ClaudeRunEvent, ClaudeRunResult } from "@chai/orchestrator"
 
 // One child per run id, so a run can be cancelled by id.
 const running = new Map<string, ChildProcess>()
 
 /**
- * Spawn the real `claude` CLI headless for one agent task, stream its
- * stream-json events to `onEvent`, and resolve with the final result. Uses
- * cross-spawn so the Windows `claude.cmd` shim runs without a shell (no command
- * injection from the prompt). The prompt/role are passed as argv, never through
- * a shell.
+ * Spawn the real agent CLI (`claude` or `kimi`, chosen by spec.cli) headless for
+ * one agent task, stream its stream-json events to `onEvent`, and resolve with
+ * the final result. Uses cross-spawn so the Windows `.cmd` shim runs without a
+ * shell (no command injection from the prompt). The prompt/role are passed as
+ * argv, never through a shell.
  */
 export function runClaudeAgent(
   runId: string,
   spec: ClaudeAgentSpec,
   onEvent: (event: ClaudeRunEvent) => void,
 ): Promise<ClaudeRunResult> {
-  const inv = buildClaudeInvocation(spec)
+  const isKimi = spec.cli === "kimi"
+  const inv = isKimi ? buildKimiInvocation(spec) : buildClaudeInvocation(spec)
+  const parseStreamLine = isKimi ? parseKimiStreamLine : parseClaudeStreamLine
 
   return new Promise<ClaudeRunResult>((resolve, reject) => {
     let child: ChildProcess
@@ -37,10 +39,17 @@ export function runClaudeAgent(
     let stdout = ""
     let stderr = ""
     let result: Extract<ClaudeRunEvent, { type: "result" }> | undefined
+    // Fallbacks for CLIs (e.g. kimi) that may not emit a `result` event: we
+    // accumulate streamed text and the last init session id and synthesize the
+    // result on close. Claude always emits `result`, so this is a no-op for it.
+    let textBuf = ""
+    let initSessionId: string | undefined
 
     const handleLine = (line: string) => {
-      for (const event of parseClaudeStreamLine(line)) {
+      for (const event of parseStreamLine(line)) {
         if (event.type === "result") result = event
+        if (event.type === "init") initSessionId = event.sessionId
+        if (event.type === "text") textBuf += event.text
         try {
           onEvent(event)
         } catch {}
@@ -64,19 +73,24 @@ export function runClaudeAgent(
 
     child.on("error", (err: Error) => {
       running.delete(runId)
-      reject(new Error(`No se pudo ejecutar 'claude': ${err.message}. ¿Está instalado el CLI de Claude?`))
+      reject(
+        new Error(
+          `No se pudo ejecutar '${inv.command}': ${err.message}. ¿Está instalado el CLI de ${isKimi ? "Kimi Code" : "Claude"}?`,
+        ),
+      )
     })
 
     child.on("close", (code: number | null) => {
       running.delete(runId)
       if (stdout.trim()) handleLine(stdout) // flush a trailing partial line
-      if (!result && code !== 0) {
-        reject(new Error(stderr.trim() || `claude terminó con código ${code}`))
+      const text = result?.text ?? textBuf
+      if (!result && !text && code !== 0) {
+        reject(new Error(stderr.trim() || `${inv.command} terminó con código ${code}`))
         return
       }
       resolve({
-        sessionId: result?.sessionId,
-        text: result?.text ?? "",
+        sessionId: result?.sessionId ?? initSessionId,
+        text: text || "",
         isError: result?.isError ?? code !== 0,
         costUsd: result?.costUsd,
         turns: result?.turns,
