@@ -1,0 +1,118 @@
+// Integration smoke for the team runtime with mock providers.
+//
+// This stands in for the browser-level E2E in the pending doc (item 9). The app
+// has no Playwright harness yet, and a full Electron/vite browser run isn't
+// reproducible in CI on Windows — but the behaviour that item wanted to prove is
+// the runtime contract: create a team, onboard, send to the team, then reopen the
+// project and confirm messages/tasks/profile/sessions survived. That's exactly
+// what this exercises end to end through the real ProjectTeamRuntime against an
+// in-memory project filesystem, so it's deterministic and fast.
+
+import { describe, expect, test } from "bun:test"
+import type { ClaudeAgentSpec, ClaudeRunResult } from "@chai/orchestrator"
+import type { ServerSDK } from "@/context/server-sdk"
+import type { TeamAgent, TeamConfig } from "@/state/agents"
+import { ProjectTeamRuntime, type ProjectTeamRuntimeDeps } from "./team-runtime"
+
+function memFs() {
+  const files = new Map<string, string>()
+  const key = (dir: string, rel: string) => `${dir}::${rel}`
+  return {
+    files,
+    get: (dir: string, rel: string) => files.get(key(dir, rel)),
+    read: async (dir: string, rel: string) => files.get(key(dir, rel)) ?? null,
+    write: async (dir: string, rel: string, content: string) => {
+      files.set(key(dir, rel), content)
+      return key(dir, rel)
+    },
+    append: async (dir: string, rel: string, content: string) => {
+      files.set(key(dir, rel), (files.get(key(dir, rel)) ?? "") + content)
+      return key(dir, rel)
+    },
+  }
+}
+
+function fakeServerSDK(): ServerSDK {
+  return {
+    client: { session: { abort: async () => undefined } },
+    event: { on: () => () => undefined },
+  } as unknown as ServerSDK
+}
+
+function deps(fs: ReturnType<typeof memFs>, over: Partial<ProjectTeamRuntimeDeps> = {}): ProjectTeamRuntimeDeps {
+  return {
+    serverSDK: fakeServerSDK(),
+    runClaudeAgent: async () => ({ text: "ok", isError: false, sessionId: "s", exitCode: 0 }) as ClaudeRunResult,
+    cancelClaudeAgent: async () => undefined,
+    sessionForAgent: () => undefined,
+    createSessionForAgent: async () => "sess",
+    modelForProvider: () => ({ providerID: "anthropic", modelID: "claude-x" }),
+    readProjectFile: fs.read,
+    writeProjectFile: fs.write,
+    appendProjectFile: fs.append,
+    policy: { turnTimeoutMs: 5_000, maxRetries: 0, backoffBaseMs: 1, maxBackoffMs: 2, maxTeamTurns: 6 },
+    ...over,
+  }
+}
+
+describe("team runtime smoke: create -> onboard -> team -> reopen", () => {
+  test("state survives closing and reopening the project", async () => {
+    const fs = memFs()
+    const agents: TeamAgent[] = [
+      { accountId: "c", provider: "claude", account: "Coord", role: "coordinator", permissions: ["read_project"] },
+      { accountId: "f", provider: "claude", account: "Front", role: "frontend", permissions: ["edit_project"] },
+    ]
+    const config: TeamConfig = {
+      projectName: "Smoke",
+      directory: "/proj/smoke",
+      stack: "ts",
+      agents,
+      roleMode: "manual",
+      visualTesting: false,
+      computerControl: "off",
+    }
+
+    const run = async (_runId: string, spec: ClaudeAgentSpec): Promise<ClaudeRunResult> => {
+      if (spec.prompt.includes("formando un equipo multi-agente")) {
+        return { text: JSON.stringify({ summary: "perfil", capabilities: ["x"] }), isError: false, exitCode: 0 }
+      }
+      if (spec.prompt.includes("Divide la siguiente solicitud")) {
+        return {
+          text: JSON.stringify({ tasks: [{ title: "UI", assigneeRole: "frontend", priority: "high" }] }),
+          isError: false,
+          exitCode: 0,
+        }
+      }
+      return {
+        text: JSON.stringify({ text: "hecho", actions: [{ type: "final_result", summary: "ok", filesTouched: ["a.ts"] }] }),
+        isError: false,
+        exitCode: 0,
+      }
+    }
+
+    // First open: onboard + a team round.
+    const first = new ProjectTeamRuntime(config, deps(fs, { runClaudeAgent: run }))
+    await first.ready
+    await first.runOnboarding()
+    const synthesis = await first.sendToTeam("crea la pantalla principal")
+    await first.flushPersistence()
+
+    expect(synthesis?.filesTouched).toContain("a.ts")
+    expect(first.teamProfile()?.agents).toHaveLength(2)
+    const firstMessageCount = first.messages().length
+    expect(firstMessageCount).toBeGreaterThan(0)
+
+    // Files were actually written.
+    expect(fs.get(config.directory, ".chai/messages.jsonl")).toBeTruthy()
+    expect(fs.get(config.directory, ".chai/tasks.json")).toBeTruthy()
+    expect(fs.get(config.directory, ".chai/team-profile.json")).toBeTruthy()
+
+    // Reopen: a fresh runtime over the same filesystem rehydrates everything.
+    const reopened = new ProjectTeamRuntime(config, deps(fs, { runClaudeAgent: run }))
+    await reopened.ready
+
+    expect(reopened.messages().length).toBe(firstMessageCount)
+    expect(reopened.teamProfile()?.projectName).toBe("Smoke")
+    expect(reopened.tasks().length).toBe(first.tasks().length)
+  })
+})
