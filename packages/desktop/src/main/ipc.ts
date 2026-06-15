@@ -7,6 +7,8 @@ import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 
 import type { FatalRendererError, IsolatedSubscriptionLoginInput, ServerReadyData, TitlebarTheme } from "../preload/types"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
+import { runClaudeAgent, cancelClaudeAgent } from "./claude-runner"
+import type { ClaudeAgentSpec } from "@chai/orchestrator"
 import { assertAttachmentBudget, createPickedFileAuthorizations } from "./attachment-picker"
 import { getStore } from "./store"
 import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
@@ -272,6 +274,15 @@ export function registerIpcHandlers(deps: Deps) {
     "open-isolated-subscription-login",
     (_event: IpcMainInvokeEvent, input: IsolatedSubscriptionLoginInput) => openIsolatedSubscriptionLogin(input),
   )
+
+  // Run the real `claude` CLI for one agent task; stream its events back to the
+  // renderer on "claude-agent-event" and resolve with the final result.
+  ipcMain.handle("run-claude-agent", (event: IpcMainInvokeEvent, runId: string, spec: ClaudeAgentSpec) =>
+    runClaudeAgent(runId, spec, (agentEvent) =>
+      event.sender.send("claude-agent-event", { runId, event: agentEvent }),
+    ),
+  )
+  ipcMain.handle("cancel-claude-agent", (_event: IpcMainInvokeEvent, runId: string) => cancelClaudeAgent(runId))
 
   ipcMain.on("open-link", (_event: IpcMainEvent, url: string) => {
     void shell.openExternal(url)

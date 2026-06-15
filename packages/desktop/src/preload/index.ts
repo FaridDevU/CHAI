@@ -93,6 +93,13 @@ const api: ElectronAPI = {
   writeProjectFile: (directory, relativePath, content) =>
     ipcRenderer.invoke("write-project-file", directory, relativePath, content),
   readProjectFile: (directory, relativePath) => ipcRenderer.invoke("read-project-file", directory, relativePath),
+  runClaudeAgent: (runId, spec) => ipcRenderer.invoke("run-claude-agent", runId, spec),
+  cancelClaudeAgent: (runId) => ipcRenderer.invoke("cancel-claude-agent", runId),
+  onClaudeAgentEvent: (callback) => {
+    const listener = (_event: unknown, payload: { runId: string; event: unknown }) => callback(payload as any)
+    ipcRenderer.on("claude-agent-event", listener)
+    return () => ipcRenderer.removeListener("claude-agent-event", listener)
+  },
   openLink: (url) => ipcRenderer.send("open-link", url),
   openPath: (path, app) => ipcRenderer.invoke("open-path", path, app),
   openIsolatedSubscriptionLogin: (input) => ipcRenderer.invoke("open-isolated-subscription-login", input),

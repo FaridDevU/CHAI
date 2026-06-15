@@ -175,6 +175,16 @@ const createPlatform = (): Platform => {
       return window.api.readProjectFile(directory, relativePath)
     },
 
+    runClaudeAgent(runId, spec) {
+      return window.api.runClaudeAgent(runId, spec)
+    },
+    cancelClaudeAgent(runId) {
+      return window.api.cancelClaudeAgent(runId)
+    },
+    onClaudeAgentEvent(callback) {
+      return window.api.onClaudeAgentEvent(callback)
+    },
+
     openLink(url: string) {
       window.api.openLink(url)
     },

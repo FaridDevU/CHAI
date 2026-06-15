@@ -1,6 +1,7 @@
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 import type { WslServersPlatform } from "@opencode-ai/app/wsl/types"
 import type { UpdaterState } from "@opencode-ai/app/updater"
+import type { ClaudeAgentSpec, ClaudeRunEvent, ClaudeRunResult } from "@chai/orchestrator"
 export type {
   WslDistroProbe,
   WslInstalledDistro,
@@ -93,6 +94,9 @@ export type ElectronAPI = {
   saveFilePicker: (opts?: { title?: string; defaultPath?: string }) => Promise<string | null>
   writeProjectFile: (directory: string, relativePath: string, content: string) => Promise<string>
   readProjectFile: (directory: string, relativePath: string) => Promise<string | null>
+  runClaudeAgent: (runId: string, spec: ClaudeAgentSpec) => Promise<ClaudeRunResult>
+  cancelClaudeAgent: (runId: string) => Promise<void>
+  onClaudeAgentEvent: (callback: (payload: { runId: string; event: ClaudeRunEvent }) => void) => () => void
   openLink: (url: string) => void
   openPath: (path: string, app?: string) => Promise<void>
   openIsolatedSubscriptionLogin: (input: IsolatedSubscriptionLoginInput) => Promise<void>

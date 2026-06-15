@@ -23,4 +23,10 @@ export {
   parseClaudeStreamEvent,
   parseClaudeStreamLine,
 } from "./claude-runner"
-export type { ClaudeAgentSpec, ClaudeInvocation, ClaudeRunEvent, ClaudePermissionMode } from "./claude-runner"
+export type {
+  ClaudeAgentSpec,
+  ClaudeInvocation,
+  ClaudeRunEvent,
+  ClaudeRunResult,
+  ClaudePermissionMode,
+} from "./claude-runner"

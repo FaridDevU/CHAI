@@ -42,6 +42,19 @@ export interface ClaudeInvocation {
   env: Record<string, string>
 }
 
+/** The outcome of a finished claude agent run. */
+export interface ClaudeRunResult {
+  /** Session id for resuming this agent's thread later. */
+  sessionId?: string
+  /** The agent's final text answer. */
+  text: string
+  isError: boolean
+  costUsd?: number
+  turns?: number
+  /** Process exit code (null if killed). */
+  exitCode: number | null
+}
+
 // CHAI permission id -> Claude Code tool names auto-approved for the agent.
 const TOOLS_BY_PERMISSION: Record<string, string[]> = {
   read_project: ["Read", "Glob", "Grep"],

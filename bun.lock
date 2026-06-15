@@ -179,7 +179,10 @@
       "name": "@opencode-ai/desktop",
       "version": "1.17.4",
       "dependencies": {
+        "@chai/orchestrator": "workspace:*",
+        "@types/cross-spawn": "6.0.6",
         "@zip.js/zip.js": "2.7.62",
+        "cross-spawn": "7.0.6",
         "effect": "catalog:",
         "electron-context-menu": "4.1.2",
         "electron-log": "^5",
