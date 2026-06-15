@@ -179,9 +179,30 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
   async function createSessionForAgent(agent: TeamAgent): Promise<string> {
     const currentTeam = team()
     if (!currentTeam) throw new Error("No hay equipo activo")
+    const title = agentSessionTitle(agent)
+
+    // Reuse an existing session with this agent's title before creating a new
+    // one, so re-onboarding / reopening / a stale cache never spawns duplicate
+    // agent sessions. This is the dedup backstop on top of the runtime's record.
+    try {
+      const listed = await serverSDK.client.session.list({
+        directory: currentTeam.directory,
+      } as Parameters<typeof serverSDK.client.session.list>[0])
+      const items = (Array.isArray(listed) ? listed : (listed as { data?: unknown }).data) as
+        | { id?: string; title?: string }[]
+        | undefined
+      const existing = items?.find((s) => s.title === title && !!s.id)
+      if (existing?.id) {
+        setCreatedSessions((current) => ({ ...current, [agent.accountId]: existing.id! }))
+        return existing.id
+      }
+    } catch {
+      // listing failed — fall through and create a fresh session
+    }
+
     const result = await serverSDK.client.session.create({
       directory: currentTeam.directory,
-      title: agentSessionTitle(agent),
+      title,
     } as Parameters<typeof serverSDK.client.session.create>[0])
     const session = "data" in result ? result.data : result
     if (!session?.id) throw new Error(`No se pudo crear la sesión de ${agent.account}`)
