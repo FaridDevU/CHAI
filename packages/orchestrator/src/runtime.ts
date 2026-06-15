@@ -36,7 +36,10 @@ function joinPath(...parts: string[]): string {
     .join("/")
 }
 
-export function createAccountRuntime(agent: Pick<OrchestratorAgent, "accountId" | "provider">, opts: RuntimeProfileOptions) {
+export function createAccountRuntime(
+  agent: Pick<OrchestratorAgent, "accountId" | "provider">,
+  opts: RuntimeProfileOptions,
+): AccountRuntime {
   const id = cleanSegment(agent.accountId)
   const provider = cleanSegment(agent.provider)
   const profilePath = joinPath(opts.root, `${provider}-${id}`)
