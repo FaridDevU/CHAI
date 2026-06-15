@@ -23,6 +23,36 @@ export const ID = Schema.String.pipe(
 )
 export type ID = typeof ID.Type
 
+// CHAI: an "account provider" is a base provider scoped to one connected
+// account, encoded as `${base}#${accountKey}` (e.g. "anthropic#claude-2"). It
+// lets several subscription accounts of the same provider run in parallel:
+// each becomes its own provider id with its own credential, reusing opencode's
+// existing per-provider resolution, caching and routing. `#` never appears in a
+// base provider id, so it is a safe, unambiguous separator.
+export const ACCOUNT_SEPARATOR = "#"
+
+/** Build the provider id for a base provider scoped to one account. */
+export function accountProviderID(base: ID, accountKey: string): ID {
+  return ID.make(`${base}${ACCOUNT_SEPARATOR}${accountKey}`)
+}
+
+/** Split a provider id into its base provider and optional account key. */
+export function parseProviderID(id: ID): { base: ID; accountKey?: string } {
+  const at = id.indexOf(ACCOUNT_SEPARATOR)
+  if (at === -1) return { base: id }
+  return { base: ID.make(id.slice(0, at)), accountKey: id.slice(at + 1) || undefined }
+}
+
+/** The underlying base provider id (drops any account scope). */
+export function baseProviderID(id: ID): ID {
+  return parseProviderID(id).base
+}
+
+/** True when the provider id is scoped to a specific account. */
+export function isAccountProviderID(id: ID): boolean {
+  return id.includes(ACCOUNT_SEPARATOR)
+}
+
 export const AISDK = Schema.Struct({
   type: Schema.Literal("aisdk"),
   package: Schema.String,
