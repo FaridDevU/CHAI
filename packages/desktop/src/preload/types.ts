@@ -93,6 +93,7 @@ export type ElectronAPI = {
   releasePickedFiles: (token: string) => Promise<void>
   saveFilePicker: (opts?: { title?: string; defaultPath?: string }) => Promise<string | null>
   writeProjectFile: (directory: string, relativePath: string, content: string) => Promise<string>
+  appendProjectFile: (directory: string, relativePath: string, content: string) => Promise<string>
   readProjectFile: (directory: string, relativePath: string) => Promise<string | null>
   ensureRuntimeDir: (dir: string) => Promise<string>
   runClaudeAgent: (runId: string, spec: ClaudeAgentSpec) => Promise<ClaudeRunResult>

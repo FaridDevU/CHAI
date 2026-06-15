@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process"
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
+import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, relative } from "node:path"
 import { app, BrowserWindow, Notification, clipboard, dialog, ipcMain, shell } from "electron"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
@@ -257,6 +257,21 @@ export function registerIpcHandlers(deps: Deps) {
       if (rel.startsWith("..") || isAbsolute(rel)) throw new Error("Refusing to write outside project directory")
       await mkdir(dirname(target), { recursive: true })
       await writeFile(target, content, "utf8")
+      return target
+    },
+  )
+
+  // Append to a file inside a project directory (CHAI: .chai/messages.jsonl).
+  // Creates the file and parents if missing; same traversal guard as the writer.
+  ipcMain.handle(
+    "append-project-file",
+    async (_event: IpcMainInvokeEvent, directory: string, relativePath: string, content: string) => {
+      if (!directory || isAbsolute(relativePath)) throw new Error("Invalid project file path")
+      const target = join(directory, relativePath)
+      const rel = relative(directory, target)
+      if (rel.startsWith("..") || isAbsolute(rel)) throw new Error("Refusing to write outside project directory")
+      await mkdir(dirname(target), { recursive: true })
+      await appendFile(target, content, "utf8")
       return target
     },
   )

@@ -171,6 +171,10 @@ const createPlatform = (): Platform => {
       return window.api.writeProjectFile(directory, relativePath, content)
     },
 
+    appendProjectFile(directory, relativePath, content) {
+      return window.api.appendProjectFile(directory, relativePath, content)
+    },
+
     readProjectFile(directory, relativePath) {
       return window.api.readProjectFile(directory, relativePath)
     },

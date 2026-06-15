@@ -92,6 +92,8 @@ const api: ElectronAPI = {
   saveFilePicker: (opts) => ipcRenderer.invoke("save-file-picker", opts),
   writeProjectFile: (directory, relativePath, content) =>
     ipcRenderer.invoke("write-project-file", directory, relativePath, content),
+  appendProjectFile: (directory, relativePath, content) =>
+    ipcRenderer.invoke("append-project-file", directory, relativePath, content),
   readProjectFile: (directory, relativePath) => ipcRenderer.invoke("read-project-file", directory, relativePath),
   ensureRuntimeDir: (dir) => ipcRenderer.invoke("ensure-runtime-dir", dir),
   runClaudeAgent: (runId, spec) => ipcRenderer.invoke("run-claude-agent", runId, spec),
