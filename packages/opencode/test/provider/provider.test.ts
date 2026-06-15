@@ -145,6 +145,10 @@ it.instance("registers one provider per connected account (CHAI)", () =>
     expect(providers[a1].key).toBe("k1")
     expect(providers[a2].key).toBe("k2")
 
+    // Account label distinguishes same-provider accounts in the model picker.
+    expect(providers[a1].name).toContain("Claude 1")
+    expect(providers[a2].name).toContain("Claude 2")
+
     // Models are scoped to the account id so the SDK/language caches key per account.
     const model = Object.values(providers[a1].models)[0]
     expect(model?.providerID).toBe(a1)

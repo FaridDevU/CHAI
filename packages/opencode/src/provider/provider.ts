@@ -1558,6 +1558,8 @@ export const layer = Layer.effect(
             database[id] = {
               ...baseInfo,
               id,
+              // Distinguish accounts of the same provider in the model picker.
+              name: cred.label ? `${baseInfo.name} · ${cred.label}` : `${baseInfo.name} (${accountKey})`,
               // Per-account models so the SDK/language caches key by account.
               models: mapValues(baseInfo.models, (model) => ({
                 ...model,
