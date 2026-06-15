@@ -25,10 +25,15 @@ export function DialogConnectProvider(props: {
 }) {
   // Attach the CHAI account identity to the OAuth callback so the server stores
   // this as a distinct account (multi-account) instead of replacing the existing
-  // credential. The cast preserves the extra fields at runtime; the server
-  // accepts them (SDK types are regenerated separately).
+  // credential. The generated SDK `oauth.callback` only forwards a fixed set of
+  // body fields (method/code) and silently drops anything else, so we use the
+  // hey-api `$body_` extra-field prefix: `buildClientParams` strips the prefix
+  // and places these into the JSON body (-> { accountKey, label }), which the
+  // server's CallbackInput schema accepts.
   const withAccount = <T extends object>(payload: T): T =>
-    props.accountKey ? ({ ...payload, accountKey: props.accountKey, label: props.label } as T) : payload
+    props.accountKey
+      ? ({ ...payload, $body_accountKey: props.accountKey, ...(props.label ? { $body_label: props.label } : {}) } as T)
+      : payload
   const dialog = useDialog()
   const serverSync = useServerSync()
   const serverSDK = useServerSDK()
