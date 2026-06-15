@@ -2,7 +2,7 @@ import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
-import { type ClaudeRunEvent } from "@chai/orchestrator"
+import { type ClaudeRunEvent, type Message } from "@chai/orchestrator"
 import {
   Accounts,
   OPENCODE_PROVIDER,
@@ -244,6 +244,92 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
     if (!accountId) return "Sin asignar"
     const agent = team()?.agents.find((a) => a.accountId === accountId)
     return agent ? `${agent.account} · ${roleLabel(agent.role)}` : accountId
+  }
+
+  // ---- Humanize the inter-agent conversation -------------------------------
+  // The wire protocol is JSON, but people shouldn't read JSON. These turn each
+  // router message into a plain chat line ("Kimi 1: Hola, puedo…").
+  function speakerName(id: string) {
+    if (id === "user") return "Tú"
+    if (id === "coordinator") return "CHAI"
+    return team()?.agents.find((a) => a.accountId === id)?.account ?? id
+  }
+
+  function friendlyFromJson(text: string): string | undefined {
+    const block =
+      text.match(/```json\s*([\s\S]*?)```/i)?.[1] ?? text.match(/```\s*([\s\S]*?)```/)?.[1] ?? text
+    const tryParse = (s: string): Record<string, unknown> | undefined => {
+      try {
+        const v = JSON.parse(s)
+        return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined
+      } catch {
+        return undefined
+      }
+    }
+    let obj = tryParse(block.trim())
+    if (!obj) {
+      const start = block.indexOf("{")
+      const end = block.lastIndexOf("}")
+      if (start >= 0 && end > start) obj = tryParse(block.slice(start, end + 1))
+    }
+    if (!obj) return undefined
+    const data = obj
+    const arr = (k: string) =>
+      Array.isArray(data[k]) ? (data[k] as unknown[]).filter((x): x is string => typeof x === "string") : []
+    const str = (k: string) => (typeof data[k] === "string" ? (data[k] as string).trim() : "")
+    const lines: string[] = []
+    if (str("text")) lines.push(str("text"))
+    if (str("summary") && str("summary") !== str("text")) lines.push(str("summary"))
+    if (arr("capabilities").length) lines.push("💪 Puedo: " + arr("capabilities").join(", "))
+    if (arr("bestTasks").length) lines.push("✅ Mejor para: " + arr("bestTasks").join(", "))
+    if (arr("limits").length) lines.push("⚠️ Límites: " + arr("limits").join(", "))
+    if (str("recommendedRole")) lines.push("🎯 Rol que me queda: " + roleLabel(str("recommendedRole")))
+    if (Array.isArray(data.actions)) {
+      for (const raw of data.actions as unknown[]) {
+        if (!raw || typeof raw !== "object") continue
+        const a = raw as Record<string, unknown>
+        const summary = typeof a.summary === "string" ? a.summary : ""
+        const reason = typeof a.reason === "string" ? a.reason : ""
+        if (a.type === "final_result" && summary) lines.push("✔️ " + summary)
+        else if (a.type === "complete_task") lines.push("✔️ Tarea terminada" + (summary ? ": " + summary : ""))
+        else if (a.type === "delegate" && typeof a.instructions === "string") lines.push("🤝 Delego: " + a.instructions)
+        else if (a.type === "request_permission" && typeof a.permission === "string")
+          lines.push("🔐 Pido permiso: " + a.permission + (reason ? " (" + reason + ")" : ""))
+        else if (a.type === "report_block") lines.push("🚧 Bloqueado: " + reason)
+      }
+    }
+    return lines.length ? lines.join("\n") : undefined
+  }
+
+  function stripJsonInstructions(text: string): string {
+    let t = text
+    for (const marker of ["Responde SOLO con JSON", "Cuando termines tu turno responde SOLO", "Divide la siguiente solicitud"]) {
+      const i = t.indexOf(marker)
+      if (i >= 0) t = t.slice(0, i)
+    }
+    return t.trim() || text.trim()
+  }
+
+  type ChatLine = { speaker: string; body: string; kind: "chai" | "agent" | "error" | "you" }
+  function chatLine(item: Message): ChatLine {
+    const speaker = speakerName(item.from)
+    const kind: ChatLine["kind"] =
+      item.type === "error" ? "error" : item.from === "user" ? "you" : item.from === "coordinator" ? "chai" : "agent"
+    if (item.type === "error") {
+      const raw = (item.text ?? "").trim()
+      const showDetail = !!raw && !/api error/i.test(raw) && raw.length < 160
+      return {
+        speaker,
+        kind,
+        body: showDetail ? `No pudo responder: ${raw}` : "No pudo responder (revisa su conexión o inicio de sesión).",
+      }
+    }
+    if (item.data?.onboarding && (item.from === "coordinator" || item.from === "user")) {
+      return { speaker: "CHAI", kind: "chai", body: "Preséntate: ¿cuáles son tus fortalezas, tus límites y qué rol te queda mejor?" }
+    }
+    const friendly = friendlyFromJson(item.text)
+    if (friendly) return { speaker, kind, body: friendly }
+    return { speaker, kind, body: stripJsonInstructions(item.text) }
   }
 
   async function sendToAgent() {
@@ -582,14 +668,29 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                         }
                       >
                         <For each={comms()}>
-                          {(item) => (
-                            <div class="rounded border border-border-weak-base px-2 py-1.5">
-                              <div class="text-10-medium text-text-weak">
-                                {agentLabel(item.from)} {"->"} {agentLabel(item.to)} · {item.type}
+                          {(item) => {
+                            const line = chatLine(item)
+                            return (
+                              <div
+                                classList={{
+                                  "flex flex-col gap-0.5 rounded-md px-2.5 py-1.5": true,
+                                  "bg-surface-base-hover": line.kind === "chai",
+                                  "border border-border-weak-base": line.kind !== "chai",
+                                }}
+                              >
+                                <span
+                                  classList={{
+                                    "text-11-medium": true,
+                                    "text-icon-error-base": line.kind === "error",
+                                    "text-text-strong": line.kind !== "error",
+                                  }}
+                                >
+                                  {line.speaker}
+                                </span>
+                                <span class="text-12-regular text-text-strong whitespace-pre-wrap">{line.body}</span>
                               </div>
-                              <div class="text-12-regular text-text-strong whitespace-pre-wrap">{item.text}</div>
-                            </div>
-                          )}
+                            )
+                          }}
                         </For>
                       </Show>
                     </div>
