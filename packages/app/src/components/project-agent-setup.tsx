@@ -27,6 +27,7 @@ import {
 } from "@/state/agents"
 import { DialogAccounts } from "@/components/dialog-accounts"
 import { DialogTeam } from "@/components/dialog-team"
+import { dropProjectTeamRuntime } from "@/state/team-runtime"
 
 const STACKS = ["Web (frontend)", "API / Backend", "Full-stack", "Python", "Móvil", "Otro"]
 const COUNTS = ["1", "2", "3", "4", "Personalizado"]
@@ -175,10 +176,61 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
       })
     }
 
+    // Starting a (re)configured team begins a CLEAN conversation: wipe any prior
+    // .chai state left in this folder by an earlier team so old errors/roles
+    // aren't repainted when the same folder is reused. Then drop the cached
+    // in-memory runtime so the next one reloads from these now-empty files.
+    try {
+      await Promise.all([
+        platform.writeProjectFile?.(s.directory, ".chai/messages.jsonl", ""),
+        platform.writeProjectFile?.(s.directory, ".chai/team-profile.json", ""),
+        platform.writeProjectFile?.(s.directory, ".chai/tasks.json", "[]"),
+        platform.writeProjectFile?.(s.directory, ".chai/sessions.json", "{}"),
+      ])
+    } catch {
+      // best-effort: a stale file that can't be cleared isn't fatal to starting.
+    }
+    dropProjectTeamRuntime(s.directory)
+
     // NOTE: we deliberately do NOT pre-create one opencode session per agent.
     // CLI agents (Claude/Kimi/Codex) run headless via their own runner, so those
     // sessions were never used and just cluttered the sidebar; non-CLI agents get
     // a session created on demand by the team runtime when they first run.
+
+    // Session housekeeping for the project (best-effort; never blocks starting):
+    //  1. Delete leftover per-agent "<role> · <account>" sessions (CLI agents run
+    //     headless and never needed an opencode session — pure clutter).
+    //  2. Ensure the project has ONE working session named after it, so the work
+    //     is saved and the user can resume later. Reused if it already exists.
+    const projectTitle = s.name.trim() || getFilename(s.directory)
+    try {
+      const accountLabels = selectedAccounts().map((a) => a.label)
+      const listed = await ctx.sdk.client.session.list({ directory: s.directory } as Parameters<
+        typeof ctx.sdk.client.session.list
+      >[0])
+      const items = (Array.isArray(listed) ? listed : (listed as { data?: unknown }).data) as
+        | { id?: string; title?: string; parentID?: string }[]
+        | undefined
+      let hasProjectSession = false
+      for (const sess of items ?? []) {
+        if (!sess?.id || sess.parentID) continue
+        const title = sess.title ?? ""
+        if (accountLabels.some((label) => title.endsWith(` · ${label}`))) {
+          await ctx.sdk.client.session.delete({ sessionID: sess.id }).catch(() => undefined)
+        } else if (title === projectTitle) {
+          hasProjectSession = true
+        }
+      }
+      if (!hasProjectSession) {
+        await ctx.sdk.client.session
+          .create({ directory: s.directory, title: projectTitle } as Parameters<
+            typeof ctx.sdk.client.session.create
+          >[0])
+          .catch(() => undefined)
+      }
+    } catch {
+      // best-effort housekeeping
+    }
 
     ctx.projects.open(s.directory)
     ctx.projects.touch(s.directory)
@@ -190,8 +242,8 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
   }
 
   return (
-    <Dialog title="Nuevo proyecto" class="w-full max-w-[560px] mx-auto">
-      <div class="flex flex-col gap-5 p-6 pt-0">
+    <Dialog title="Nuevo proyecto" size="large" class="w-full max-w-[560px] mx-auto">
+      <div class="flex flex-col gap-5 p-6 pt-0 flex-1 min-h-0">
         {/* step indicator */}
         <div class="flex items-center gap-2">
           <For each={STEPS}>
@@ -224,7 +276,7 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
         </div>
 
         {/* step content (scrolls when it overflows; indicator + footer stay put) */}
-        <div class="flex flex-col gap-5 overflow-y-auto max-h-[58vh] pr-1 -mr-1">
+        <div class="flex flex-col gap-5 overflow-y-auto flex-1 min-h-0 pr-1 -mr-1">
         {/* STEP 0 — details */}
         <Show when={s.step === 0}>
           <div class="flex flex-col gap-4">
