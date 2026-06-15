@@ -6,8 +6,9 @@ import {
   type OrchestratorAgent,
   type Transport,
 } from "@chai/orchestrator"
+import type { AssistantMessage, Event, Part, TextPart } from "@opencode-ai/sdk/v2/client"
 import { Identifier } from "@/utils/id"
-import { OPENCODE_PROVIDER, isCliProvider, roleLabel, type TeamAgent, type TeamConfig } from "@/state/agents"
+import { OPENCODE_PROVIDER, isCliProvider, roleLabel, type TeamAgent } from "@/state/agents"
 import type { ServerSDK } from "@/context/server-sdk"
 
 /**
@@ -27,6 +28,8 @@ export function createClaudeTransport(input: {
   sessionForAgent?: (agent: TeamAgent) => string | undefined
   /** Called with the agent's session id after a run, to persist continuity. */
   onSession?: (agent: TeamAgent, sessionId: string) => void
+  onRunStart?: (agent: TeamAgent, runId: string) => void
+  onRunEnd?: (agent: TeamAgent, runId: string) => void
 }): Transport {
   return {
     async deliver(agent, message, runtime): Promise<MessageInput> {
@@ -54,7 +57,13 @@ export function createClaudeTransport(input: {
       }
 
       const runId = `${agent.accountId}-${Date.now().toString(36)}`
-      const result = await input.runClaudeAgent(runId, spec)
+      input.onRunStart?.(teamAgent, runId)
+      let result: ClaudeRunResult
+      try {
+        result = await input.runClaudeAgent(runId, spec)
+      } finally {
+        input.onRunEnd?.(teamAgent, runId)
+      }
       if (result.sessionId) input.onSession?.(teamAgent, result.sessionId)
 
       return {
@@ -80,6 +89,87 @@ export function toOrchestratorAgent(agent: TeamAgent, index: number, sessionId?:
     sessionId,
     status: "ready",
   }
+}
+
+function partText(part: Part): string {
+  if (part.type !== "text") return ""
+  return (part as TextPart).text ?? ""
+}
+
+function assistantText(messageID: string, parts: Map<string, Part>): string {
+  return [...parts.values()]
+    .filter((part) => part.messageID === messageID)
+    .map(partText)
+    .join("")
+    .trim()
+}
+
+export function waitForAssistantReply(input: {
+  serverSDK: ServerSDK
+  directory: string
+  sessionID: string
+  timeoutMs?: number
+}): Promise<{ message: AssistantMessage; text: string }> {
+  const timeoutMs = input.timeoutMs ?? 120_000
+  return new Promise((resolve, reject) => {
+    const parts = new Map<string, Part>()
+    const assistants = new Map<string, AssistantMessage>()
+    let done = false
+
+    const cleanup = () => {
+      done = true
+      clearTimeout(timer)
+      unsubscribe()
+    }
+
+    const tryResolve = () => {
+      for (const message of assistants.values()) {
+        if (!message.time.completed && !message.finish && !message.error) continue
+        if (message.error) {
+          cleanup()
+          const name = "name" in message.error ? message.error.name : undefined
+          reject(new Error(name ?? "El agente termino con error"))
+          return
+        }
+        const text = assistantText(message.id, parts)
+        if (!text) continue
+        cleanup()
+        resolve({ message, text })
+        return
+      }
+    }
+
+    const timer = setTimeout(() => {
+      cleanup()
+      reject(new Error("Tiempo agotado esperando la respuesta del agente"))
+    }, timeoutMs)
+
+    const unsubscribe = input.serverSDK.event.on(input.directory, (event: Event) => {
+      if (done) return
+      if (event.type === "message.updated") {
+        const info = event.properties.info
+        if (info.sessionID !== input.sessionID || info.role !== "assistant" || info.summary) return
+        assistants.set(info.id, info)
+        tryResolve()
+        return
+      }
+      if (event.type === "message.part.updated") {
+        const part = event.properties.part
+        if (part.sessionID !== input.sessionID) return
+        parts.set(part.id, part)
+        tryResolve()
+        return
+      }
+      if (event.type === "message.part.delta") {
+        const props = event.properties
+        if (props.sessionID !== input.sessionID || props.field !== "text") return
+        const current = parts.get(props.partID)
+        if (!current || current.type !== "text") return
+        parts.set(props.partID, { ...current, text: `${(current as TextPart).text ?? ""}${props.delta}` } as Part)
+        tryResolve()
+      }
+    })
+  })
 }
 
 // The account-activate route isn't in the generated SDK yet, so this is a hand
@@ -109,6 +199,9 @@ export function createTeamTransport(input: {
   createSessionForAgent: (agent: TeamAgent) => Promise<string>
   byAccountId: (accountId: string) => TeamAgent | undefined
   modelForProvider: (providerID: string) => { providerID: string; modelID: string } | undefined
+  waitForAssistantReply?: (sessionID: string) => Promise<{ text: string }>
+  onSessionStart?: (agent: TeamAgent, sessionID: string) => void
+  onSessionEnd?: (agent: TeamAgent, sessionID: string) => void
 }): Transport {
   return {
     async deliver(agent, message, runtime): Promise<MessageInput> {
@@ -134,19 +227,27 @@ export function createTeamTransport(input: {
         message.text,
       ].join("\n")
 
-      await input.serverSDK.client.session.promptAsync({
-        sessionID,
-        agent: "general",
-        model,
-        messageID: Identifier.ascending("message"),
-        parts: [{ type: "text", text }],
-      })
+      const reply = input.waitForAssistantReply?.(sessionID)
+      input.onSessionStart?.(teamAgent, sessionID)
+      let response: { text: string } | undefined
+      try {
+        await input.serverSDK.client.session.promptAsync({
+          sessionID,
+          agent: "general",
+          model,
+          messageID: Identifier.ascending("message"),
+          parts: [{ type: "text", text }],
+        })
+        response = await reply
+      } finally {
+        input.onSessionEnd?.(teamAgent, sessionID)
+      }
 
       return {
         from: agent.id,
         to: message.from,
         type: "respuesta",
-        text: `Enviado a ${teamAgent.account}`,
+        text: response?.text?.trim() || `Enviado a ${teamAgent.account}`,
         data: { sessionID, runtime: runtime.profilePath },
       }
     },

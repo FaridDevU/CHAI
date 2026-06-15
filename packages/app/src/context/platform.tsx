@@ -67,6 +67,11 @@ type PlatformBase = {
    *  only). relativePath must stay within directory. Resolves null if missing. */
   readProjectFile?(directory: string, relativePath: string): Promise<string | null>
 
+  /** Append a chunk to a file inside a project directory (desktop only), creating
+   *  it if missing. Used for incremental .chai/messages.jsonl writes. When absent,
+   *  callers fall back to rewriting the whole file via writeProjectFile. */
+  appendProjectFile?(directory: string, relativePath: string, content: string): Promise<string>
+
   /** Create an isolated account runtime dir (desktop only), so a login PTY can
    *  cwd into it. Constrained to the CHAI runtime root. */
   ensureRuntimeDir?(dir: string): Promise<string>
