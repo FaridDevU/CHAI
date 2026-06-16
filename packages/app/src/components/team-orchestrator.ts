@@ -24,6 +24,8 @@ export function createClaudeTransport(input: {
   runClaudeAgent: (runId: string, spec: ClaudeAgentSpec) => Promise<ClaudeRunResult>
   byAccountId: (accountId: string) => TeamAgent | undefined
   modelForAgent?: (agent: TeamAgent) => string | undefined
+  /** Team-level computer-control toggle; "allowed" escalates the agent's CLI sandbox to full access. */
+  computerControl?: "off" | "approval_required" | "allowed"
   /** Prior session id per agent, to resume its thread for continuity. */
   sessionForAgent?: (agent: TeamAgent) => string | undefined
   /** Called with the agent's session id after a run, to persist continuity. */
@@ -57,7 +59,13 @@ export function createClaudeTransport(input: {
         projectDir: input.directory,
         prompt: message.text,
         role: teamAgent.role === "auto" ? undefined : roleLabel(teamAgent.role),
-        permissions: teamAgent.permissions ? [...teamAgent.permissions] : undefined,
+        permissions: (() => {
+          // "Control del PC = Permitido" grants full machine control (→ the CLI's
+          // full-access sandbox) even if the per-agent checkbox wasn't ticked.
+          const set = new Set(teamAgent.permissions ?? [])
+          if (input.computerControl === "allowed") set.add("computer_control")
+          return set.size ? [...set] : undefined
+        })(),
         model: input.modelForAgent?.(teamAgent),
         resumeSessionId: input.sessionForAgent?.(teamAgent),
       }
