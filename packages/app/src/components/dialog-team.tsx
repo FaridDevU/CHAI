@@ -235,6 +235,11 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
   })
 
   const comms = createMemo(() => runtime()?.messages() ?? [])
+  // Hide CHAI's internal instruction prompts for the role discussion — only the
+  // agents' own messages should show, so the conversation reads naturally.
+  const visibleComms = createMemo(() =>
+    comms().filter((m) => !(m.type === "pregunta" && Boolean((m.data as Record<string, unknown> | undefined)?.discussion))),
+  )
   const runtimeStates = createMemo(() => runtime()?.agentStates() ?? {})
   const tasks = createMemo(() => runtime()?.tasks() ?? [])
   const runState = createMemo(() => runtime()?.runState() ?? "idle")
@@ -325,6 +330,8 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
       const i = t.indexOf(marker)
       if (i >= 0) t = t.slice(0, i)
     }
+    // Hide the internal "ROL: <id>" commitment marker agents append during the role debate.
+    t = t.replace(/(^|\n)\s*ROL:\s*[a-z_]+\s*(?=\n|$)/gi, "")
     return t.trim() || text.trim()
   }
 
@@ -464,19 +471,29 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                 <span class="text-12-medium text-text-weak">Elige un proyecto para ver y gestionar su equipo</span>
                 <For each={teams()}>
                   {(tc) => (
-                    <button
-                      type="button"
-                      class="flex items-center justify-between gap-2 rounded-md border border-border-weak-base px-3 py-2.5 text-left transition-colors hover:border-border-strong"
-                      onClick={() => setPickedDir(tc.directory)}
-                    >
-                      <div class="flex min-w-0 flex-col">
-                        <span class="text-13-medium text-text-strong truncate">{tc.projectName}</span>
-                        <span class="text-11-regular text-text-weak truncate">{tc.directory}</span>
-                      </div>
-                      <span class="shrink-0 text-11-medium text-text-weak">
-                        {tc.agents.length} {tc.agents.length === 1 ? "agente" : "agentes"}
-                      </span>
-                    </button>
+                    <div class="flex items-center gap-2 rounded-md border border-border-weak-base px-3 py-2.5 transition-colors hover:border-border-strong">
+                      <button
+                        type="button"
+                        class="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+                        onClick={() => setPickedDir(tc.directory)}
+                      >
+                        <div class="flex min-w-0 flex-col">
+                          <span class="text-13-medium text-text-strong truncate">{tc.projectName}</span>
+                          <span class="text-11-regular text-text-weak truncate">{tc.directory}</span>
+                        </div>
+                        <span class="shrink-0 text-11-medium text-text-weak">
+                          {tc.agents.length} {tc.agents.length === 1 ? "agente" : "agentes"}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        class="shrink-0 rounded px-2 py-1 text-11-medium text-text-weak hover:text-icon-error-base"
+                        title="Quitar este equipo de la lista"
+                        onClick={() => Teams.remove(tc.directory)}
+                      >
+                        Quitar
+                      </button>
+                    </div>
                   )}
                 </For>
               </div>
@@ -739,7 +756,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                       style={{ background: "#0b0e14" }}
                     >
                       <Show
-                        when={comms().length > 0}
+                        when={visibleComms().length > 0}
                         fallback={
                           <div class="py-6 text-center text-11-regular" style={{ color: "#6b7280" }}>
                             {runState() === "running"
@@ -748,7 +765,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                           </div>
                         }
                       >
-                        <For each={comms()}>
+                        <For each={visibleComms()}>
                           {(item) => {
                             const line = chatLine(item)
                             return (
