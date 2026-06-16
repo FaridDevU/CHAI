@@ -49,6 +49,15 @@ export function createClaudeTransport(input: {
             : runtime.env.CLAUDE_CONFIG_DIR ?? runtime.configPath
       if (!configDir) throw new Error(`La cuenta ${teamAgent.account} no tiene un runtime aislado`)
 
+      // Onboarding and the role debate are pure conversation: the agent must
+      // answer from its own knowledge, NOT go explore the project. Without this,
+      // an agentic CLI (esp. Claude) starts globbing/grepping the whole repo and
+      // stalls or times out. So those turns run with NO tools and a single turn.
+      const conversational = !!(
+        (message as { data?: Record<string, unknown> }).data?.onboarding ||
+        (message as { data?: Record<string, unknown> }).data?.discussion
+      )
+
       // NOTE: spread permissions into a PLAIN array. teamAgent often comes from a
       // Solid store, so its arrays are reactive proxies — passing one across the
       // Electron IPC boundary throws "An object could not be cloned". Every other
@@ -59,13 +68,16 @@ export function createClaudeTransport(input: {
         projectDir: input.directory,
         prompt: message.text,
         role: teamAgent.role === "auto" ? undefined : roleLabel(teamAgent.role),
-        permissions: (() => {
-          // "Control del PC = Permitido" grants full machine control (→ the CLI's
-          // full-access sandbox) even if the per-agent checkbox wasn't ticked.
-          const set = new Set(teamAgent.permissions ?? [])
-          if (input.computerControl === "allowed") set.add("computer_control")
-          return set.size ? [...set] : undefined
-        })(),
+        permissions: conversational
+          ? undefined
+          : (() => {
+              // "Control del PC = Permitido" grants full machine control (→ the CLI's
+              // full-access sandbox) even if the per-agent checkbox wasn't ticked.
+              const set = new Set(teamAgent.permissions ?? [])
+              if (input.computerControl === "allowed") set.add("computer_control")
+              return set.size ? [...set] : undefined
+            })(),
+        maxTurns: conversational ? 1 : undefined,
         model: input.modelForAgent?.(teamAgent),
         resumeSessionId: input.sessionForAgent?.(teamAgent),
       }
