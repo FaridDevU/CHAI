@@ -72,6 +72,27 @@ describe("buildClaudeInvocation", () => {
     expect(inv.args).toContain("--add-dir")
     expect(inv.args).toContain("/shared")
   })
+
+  test("conversational turns disable the agentic tools so the reply is text", () => {
+    const inv = buildClaudeInvocation({
+      configDir: "/c",
+      projectDir: "/p",
+      prompt: "preséntate al equipo",
+      conversational: true,
+    })
+    // --disallowedTools removes the agentic tools from what the model can call,
+    // so an onboarding/role-debate turn can't emit a tool_use and dead-end at
+    // error_max_turns; it answers in text instead.
+    expect(inv.args).toContain("--disallowedTools")
+    const disallowed = inv.args[inv.args.indexOf("--disallowedTools") + 1] ?? ""
+    for (const tool of ["Bash", "Read", "Glob", "Grep", "Edit", "Write", "Task", "WebSearch", "ToolSearch", "Skill"])
+      expect(disallowed).toContain(tool)
+  })
+
+  test("non-conversational turns leave the tools available", () => {
+    const inv = buildClaudeInvocation({ configDir: "/c", projectDir: "/p", prompt: "do work" })
+    expect(inv.args).not.toContain("--disallowedTools")
+  })
 })
 
 describe("parseClaudeStreamEvent", () => {

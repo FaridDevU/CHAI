@@ -51,8 +51,10 @@ export function createClaudeTransport(input: {
 
       // Onboarding and the role debate are pure conversation: the agent must
       // answer from its own knowledge, NOT go explore the project. Without this,
-      // an agentic CLI (esp. Claude) starts globbing/grepping the whole repo and
-      // stalls or times out. So those turns run with NO tools and a single turn.
+      // an agentic CLI (esp. Claude) starts globbing/grepping the whole repo, or
+      // emits a tool_use that dead-ends at error_max_turns. So those turns run
+      // with the agentic tools disabled (spec.conversational → --disallowedTools)
+      // and a small turn budget.
       const conversational = !!(
         (message as { data?: Record<string, unknown> }).data?.onboarding ||
         (message as { data?: Record<string, unknown> }).data?.discussion
@@ -77,7 +79,10 @@ export function createClaudeTransport(input: {
               if (input.computerControl === "allowed") set.add("computer_control")
               return set.size ? [...set] : undefined
             })(),
-        maxTurns: conversational ? 1 : undefined,
+        conversational,
+        // A small budget (not 1): even with the agentic tools disabled, Claude may
+        // spend a turn before its text reply — maxTurns 1 would fail as error_max_turns.
+        maxTurns: conversational ? 4 : undefined,
         model: input.modelForAgent?.(teamAgent),
         resumeSessionId: input.sessionForAgent?.(teamAgent),
       }

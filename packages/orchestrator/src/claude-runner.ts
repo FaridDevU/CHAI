@@ -38,6 +38,11 @@ export interface ClaudeAgentSpec {
   addDirs?: string[]
   /** Emit token-level deltas (--include-partial-messages). */
   partialMessages?: boolean
+  /** Pure-conversation turn (onboarding / role debate): disable the agentic tools
+   *  so Claude answers from its own knowledge in a single text turn instead of
+   *  emitting a tool_use that would burn the turn budget and fail with
+   *  error_max_turns. See CONVERSATIONAL_DISALLOWED_TOOLS. */
+  conversational?: boolean
 }
 
 export interface ClaudeInvocation {
@@ -90,6 +95,21 @@ export function mapPermissionsToClaude(permissions: string[] = []): {
   return { allowedTools: [...allowed], permissionMode }
 }
 
+// Claude Code's built-in agentic/meta tools. For a pure-conversation turn we
+// pass these to --disallowedTools so they're removed from the set the model can
+// call: an onboarding/role-debate reply must come back as TEXT, not a tool_use.
+// (Passing no --allowedTools does NOT disable them — that flag only governs
+// auto-approval; the tools stay available and Claude, being an agentic CLI,
+// will sometimes call one and then hit error_max_turns.)
+const CONVERSATIONAL_DISALLOWED_TOOLS = [
+  "Task", "Bash", "BashOutput", "KillShell", "Glob", "Grep", "Read", "Edit", "Write",
+  "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "TodoWrite", "PowerShell", "Skill",
+  "ToolSearch", "AskUserQuestion", "DesignSync", "PushNotification", "RemoteTrigger", "Monitor",
+  "ScheduleWakeup", "EnterPlanMode", "ExitPlanMode", "EnterWorktree", "ExitWorktree",
+  "CronCreate", "CronDelete", "CronList", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate",
+  "TaskOutput", "TaskStop",
+]
+
 /** Build the headless `claude` invocation for one agent task. */
 export function buildClaudeInvocation(spec: ClaudeAgentSpec, opts?: { command?: string }): ClaudeInvocation {
   // Note: no --bare (it skips OAuth/keychain and would force ANTHROPIC_API_KEY),
@@ -104,6 +124,9 @@ export function buildClaudeInvocation(spec: ClaudeAgentSpec, opts?: { command?: 
 
   const { allowedTools, permissionMode } = mapPermissionsToClaude(spec.permissions)
   if (allowedTools.length) args.push("--allowedTools", allowedTools.join(","))
+  // Conversation-only turns disable the agentic tools so the reply is text, not a
+  // tool_use that would dead-end at error_max_turns.
+  if (spec.conversational) args.push("--disallowedTools", CONVERSATIONAL_DISALLOWED_TOOLS.join(","))
   args.push("--permission-mode", permissionMode)
 
   if (typeof spec.maxTurns === "number") args.push("--max-turns", String(spec.maxTurns))
