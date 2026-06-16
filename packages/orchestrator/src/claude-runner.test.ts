@@ -40,7 +40,9 @@ describe("buildClaudeInvocation", () => {
     expect(inv.env.CLAUDE_CONFIG_DIR).toBe("/accounts/claude-1")
     // headless stream-json is on, with the role/model/turns threaded through.
     expect(inv.args).toContain("-p")
-    expect(inv.args).toContain("implement login")
+    // The prompt rides stdin (not argv) to dodge the Windows command-line limit.
+    expect(inv.stdin).toBe("implement login")
+    expect(inv.args).not.toContain("implement login")
     expect(inv.args.join(" ")).toContain("--output-format stream-json --verbose")
     expect(inv.args).toContain("--model")
     expect(inv.args).toContain("claude-sonnet-4-5")

@@ -95,20 +95,25 @@ export function runClaudeAgent(
 
   return new Promise<ClaudeRunResult>((resolve, reject) => {
     let child: ChildProcess
+    // Claude takes its (potentially huge) prompt via stdin to dodge Windows'
+    // command-line length limit, which a long role-debate transcript overflows
+    // through the claude.cmd shim. codex/kimi keep stdin closed: the prompt rides
+    // argv and `codex exec` would otherwise block forever reading a non-TTY pipe.
+    const promptViaStdin = typeof inv.stdin === "string"
     try {
       child = spawn(command, inv.args, {
         cwd: inv.cwd,
         env,
         windowsHide: true,
-        // Close the child's stdin (NUL). The prompt is passed via argv; if stdin
-        // stays an open pipe, `codex exec` detects a non-TTY and blocks forever
-        // reading it ("Reading additional input from stdin..."). claude/kimi -p
-        // don't read stdin, so ignoring it is safe for all three.
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [promptViaStdin ? "pipe" : "ignore", "pipe", "pipe"],
       })
     } catch (err) {
       reject(err)
       return
+    }
+    if (promptViaStdin && child.stdin) {
+      child.stdin.on("error", () => {}) // ignore EPIPE if the child exits early
+      child.stdin.end(inv.stdin)
     }
     running.set(runId, child)
     // Diagnostics: log the resolved command + isolated config dir (never the

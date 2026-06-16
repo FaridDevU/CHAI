@@ -46,6 +46,10 @@ export interface ClaudeInvocation {
   cwd: string
   /** Env overrides to merge over the parent process env when spawning. */
   env: Record<string, string>
+  /** When set, write this to the child's stdin instead of passing it via argv
+   *  (Claude reads the prompt from stdin). Avoids Windows' command-line length
+   *  limit, which a long role-debate transcript blows past via the claude.cmd shim. */
+  stdin?: string
 }
 
 /** The outcome of a finished claude agent run. */
@@ -91,7 +95,9 @@ export function buildClaudeInvocation(spec: ClaudeAgentSpec, opts?: { command?: 
   // Note: no --bare (it skips OAuth/keychain and would force ANTHROPIC_API_KEY),
   // and we deliberately do NOT set ANTHROPIC_API_KEY so the subscription login
   // in configDir is used.
-  const args = ["-p", spec.prompt, "--output-format", "stream-json", "--verbose"]
+  // The prompt goes via stdin (see ClaudeInvocation.stdin), NOT argv: a long
+  // role-debate transcript would otherwise overflow the Windows command line.
+  const args = ["-p", "--output-format", "stream-json", "--verbose"]
   if (spec.partialMessages) args.push("--include-partial-messages")
   if (spec.model) args.push("--model", spec.model)
   if (spec.role) args.push("--append-system-prompt", spec.role)
@@ -109,6 +115,7 @@ export function buildClaudeInvocation(spec: ClaudeAgentSpec, opts?: { command?: 
     args,
     cwd: spec.projectDir,
     env: { CLAUDE_CONFIG_DIR: spec.configDir },
+    stdin: spec.prompt,
   }
 }
 
