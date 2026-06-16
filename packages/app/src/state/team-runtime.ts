@@ -353,9 +353,13 @@ export class ProjectTeamRuntime {
     this.setAgentState(accountId, "ready")
   }
 
-  /** Effective permissions currently granted to an agent (source: team config). */
+  /** Effective permissions currently granted to an agent (per-agent + team toggles). */
   effectivePermissions(accountId: string): string[] {
-    return this.team.agents.find((agent) => agent.accountId === accountId)?.permissions ?? []
+    const base = this.team.agents.find((agent) => agent.accountId === accountId)?.permissions ?? []
+    const perms = new Set<string>(base)
+    // "Control del PC = Permitido" grants full machine control team-wide.
+    if (this.team.computerControl === "allowed") perms.add("computer_control")
+    return [...perms]
   }
 
   grantPermission(accountId: string, permission: Permission) {
@@ -854,12 +858,39 @@ export class ProjectTeamRuntime {
     ].join("\n")
   }
 
+  /** A plain-language sentence telling the agent what it may do (so it doesn't assume read-only). */
+  private permissionsSentence(agent: TeamAgent): string {
+    const labels: Record<string, string> = {
+      read_project: "leer el proyecto",
+      edit_project: "crear y editar archivos del proyecto",
+      run_commands: "ejecutar comandos, scripts y tests",
+      browser_testing: "probar en el navegador",
+      screenshots: "tomar capturas de pantalla",
+      computer_control: "control TOTAL del equipo (no estás en solo lectura)",
+    }
+    const has = this.effectivePermissions(agent.accountId).map((p) => labels[p] ?? p)
+    return has.length
+      ? `Tus permisos REALES en este proyecto: ${has.join(", ")}. Actúa en consecuencia (NO asumas solo lectura).`
+      : "Tienes permisos de solo lectura en este proyecto."
+  }
+
+  /** One line describing the whole team, so agents know exactly who is (and isn't) here. */
+  private teamCompositionSentence(): string {
+    const names = this.team.agents.map((a) => a.account).join(", ")
+    return (
+      `El equipo lo forman SOLO estos ${this.team.agents.length} agentes: ${names}. ` +
+      "No va a llegar nadie más por ahora, así que repártanse entre ustedes lo esencial; si creen que faltan manos, eso se decide después."
+    )
+  }
+
   private onboardingPrompt(agent: TeamAgent) {
     return [
       "CHAI esta formando un equipo multi-agente para este proyecto.",
       `Cuenta: ${agent.account}`,
       `Proveedor: ${agent.provider}`,
       `Rol actual: ${roleLabel(agent.role)}`,
+      this.teamCompositionSentence(),
+      this.permissionsSentence(agent),
       "",
       "Responde SOLO con JSON valido, sin markdown, con este schema:",
       "{",
@@ -1107,21 +1138,33 @@ export class ProjectTeamRuntime {
     return result
   }
 
+  /** Resolve a role from a short answer (a role id, its Spanish label, or loose text). */
+  private parseRoleAnswer(text?: string): Role | undefined {
+    if (!text) return undefined
+    const t = text.trim().toLowerCase()
+    for (const r of ROLES) if (r.id !== "auto" && t.includes(r.id)) return r.id
+    for (const r of ROLES) if (r.id !== "auto" && t.includes(r.label.toLowerCase())) return r.id
+    const inferred = inferRole(text, "")
+    return inferred && inferred !== "auto" ? inferred : undefined
+  }
+
   /**
-   * Have the agents TALK TO EACH OTHER (not just to CHAI) to agree on who takes
-   * which role. Runs even when there's no clash — the user wants to see them
-   * coordinate. Each agent addresses the NEXT one with the running proposal and
-   * hears back, so the feed shows real "Kimi → Codex" / "Codex → Kimi" exchanges.
-   * Mutates profiles' recommendedRole; assignDistinctRoles still guarantees no
-   * two agents end up sharing a role.
+   * A REAL multi-turn debate where the agents divide up the roles themselves.
+   * Each one writes its own message (as long as it needs), arguing from its
+   * ACTUAL strengths for the role it wants and against the one it doesn't, while
+   * reacting to teammates. CHAI's instruction is hidden, so the feed shows only
+   * genuine "Kimi → Codex" / "Codex → Kimi" chat. It runs several turns until
+   * they settle on distinct roles (capped); assignDistinctRoles still guarantees
+   * no two end up sharing a role.
    */
   private async discussRoles(profiles: TeamRuntimeAgentProfile[]) {
     if (this.team.roleMode !== "auto" && this.team.roleMode !== "hybrid") return
     const agents = this.team.agents
     if (agents.length < 2) return
 
+    const profileOf = (accountId: string) => profiles.find((x) => x.accountId === accountId)
     const roleOf = (accountId: string): Role | undefined => {
-      const p = profiles.find((x) => x.accountId === accountId)
+      const p = profileOf(accountId)
       if (!p) return undefined
       return (
         p.recommendedRole ??
@@ -1129,45 +1172,77 @@ export class ProjectTeamRuntime {
       )
     }
     const proposed = new Map<string, Role | undefined>(agents.map((a) => [a.accountId, roleOf(a.accountId)]))
-    const splitText = () => agents.map((a) => `${a.account}: ${roleLabel(proposed.get(a.accountId) ?? "auto")}`).join(", ")
-    const available = ROLES.map((r) => r.id).filter((r) => r !== "auto")
+    const rolesList = ROLES.filter((r) => r.id !== "auto")
+      .map((r) => r.label)
+      .join(", ")
+    const ids = ROLES.map((r) => r.id).filter((r) => r !== "auto")
+    const distinctSettled = () => {
+      const roles = agents.map((a) => proposed.get(a.accountId))
+      return roles.every((r) => r && r !== "auto") && new Set(roles).size === roles.length
+    }
 
     this.orchestrator.router.send({
       from: COORDINATOR,
       to: "user",
       type: "info",
-      text: "El equipo va a conversar para repartirse los roles sin repetir. Propuesta inicial — " + splitText(),
+      text:
+        "Equipo, debatan entre ustedes y repártanse los roles (ninguno repetido). " +
+        "Defiendan con argumentos el rol donde de verdad aporten más; tómense el tiempo que haga falta.",
     })
     this.syncMessages()
 
-    // Round-robin: each agent talks to the next, proposing the split and hearing back.
-    for (let i = 0; i < agents.length; i++) {
+    // Multi-turn debate: agents take turns, each seeing the full running transcript,
+    // until they land on distinct roles (or the turn cap is reached).
+    const transcript: string[] = []
+    const minTurns = agents.length * 2 // at least two full rounds, so it's a real back-and-forth
+    const maxTurns = agents.length * 4
+    for (let turn = 0; turn < maxTurns; turn++) {
       this.assertNotCancelled()
       await this.waitIfPaused()
-      const speaker = agents[i]!
-      const listener = agents[(i + 1) % agents.length]!
+      const speaker = agents[turn % agents.length]!
+      const listener = agents[(turn + 1) % agents.length]!
       if (speaker.accountId === listener.accountId) continue
+      const others = agents
+        .filter((a) => a.accountId !== speaker.accountId)
+        .map((a) => a.account)
+        .join(", ")
+      const opening = transcript.length === 0
       const prompt = [
-        `Hola ${listener.account}, soy ${speaker.account}.`,
-        `Para no repetir roles en el equipo, propongo este reparto: ${splitText()}.`,
-        `¿Te queda bien tu rol propuesto (${roleLabel(proposed.get(listener.accountId) ?? "auto")})? Si prefieres otro, elígelo y explica brevemente por qué.`,
-        `Roles posibles: ${available.map(roleLabel).join(", ")}.`,
-        `Responde SOLO con JSON: {"agree": true|false, "recommendedRole": "<id>"}, donde <id> es uno de: ${available.join(", ")}.`,
-      ].join("\n")
-      this.setAgentState(listener.accountId, "working")
-      const reply = await this.dispatchWithPolicy(listener.accountId, prompt, {
-        from: speaker.accountId,
+        `Eres ${speaker.account}, en una conversación de equipo con ${others} para decidir quién toma cada rol.`,
+        `Regla: NO puede haber dos personas con el mismo rol. Roles posibles: ${rolesList}.`,
+        this.teamCompositionSentence(),
+        this.permissionsSentence(speaker),
+        `Nadie te dice qué se te da bien: evalúa con honestidad TUS PROPIAS capacidades reales (qué haces mejor y qué peor) y arguméntalo tú mismo, con tu propio conocimiento.`,
+        transcript.length ? `Conversación hasta ahora:\n${transcript.join("\n")}` : "",
+        opening
+          ? `Abre tú dirigiéndote a ${listener.account}: di qué rol quieres tomar y cuál NO, y por qué, según lo que de verdad sabes hacer.`
+          : `Continúa el debate de forma genuina: reacciona a lo que dijeron (sobre todo ${listener.account}), defiende tu postura con argumentos propios o cede si te convencen, y avanza hacia un acuerdo donde nadie repita rol. No repitas lo ya dicho: aporta algo nuevo.`,
+        `Habla como en un chat real, con tu propio criterio y personalidad; extiéndete lo que necesites. Nada de JSON ni listas con viñetas.`,
+        `Al FINAL, en una línea aparte, escribe exactamente "ROL: <id>" con el rol que TÚ tomas (uno de: ${ids.join(", ")}).`,
+      ]
+        .filter(Boolean)
+        .join("\n")
+      this.setAgentState(speaker.accountId, "working")
+      const reply = await this.dispatchWithPolicy(speaker.accountId, prompt, {
+        from: listener.accountId,
         type: "pregunta",
         data: { discussion: true },
       })
-      this.setAgentState(listener.accountId, reply?.type === "error" ? "error" : "ready")
-      const parsed = reply ? parseOnboardingProfile(reply.text) : undefined
-      if (parsed?.recommendedRole && parsed.recommendedRole !== "auto") {
-        proposed.set(listener.accountId, parsed.recommendedRole)
+      this.setAgentState(speaker.accountId, reply?.type === "error" ? "error" : "ready")
+      const text = reply?.text?.trim()
+      if (text) {
+        transcript.push(`${speaker.account}: ${text}`)
+        // The agent commits to its role on an explicit "ROL: <id>" line, so we
+        // take that (reliable) instead of guessing the role from the prose.
+        const marker = text.match(/ROL:\s*([a-z_]+)/i)
+        const chosen = this.parseRoleAnswer(marker?.[1])
+        if (chosen) proposed.set(speaker.accountId, chosen)
       }
+      // Wrap up only after a real discussion (>= minTurns) and once roles are distinct.
+      if (turn + 1 >= minTurns && distinctSettled()) break
     }
 
-    // Carry the discussed picks into the profiles; assignDistinctRoles enforces uniqueness.
+    // Carry what each one settled on into the profiles; assignDistinctRoles enforces uniqueness.
     for (const p of profiles) {
       const r = proposed.get(p.accountId)
       if (r && r !== "auto") p.recommendedRole = r
@@ -1249,6 +1324,7 @@ export class ProjectTeamRuntime {
         directory: this.team.directory,
         runClaudeAgent: this.deps.runClaudeAgent,
         byAccountId,
+        computerControl: this.team.computerControl,
         sessionForAgent: (agent) => this.cliSessions[agent.accountId] ?? this.sessionRecords[agent.accountId]?.sessionId,
         onSession: (agent, sessionId) => {
           this.cliSessions[agent.accountId] = sessionId
