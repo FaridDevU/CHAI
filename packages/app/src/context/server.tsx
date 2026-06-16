@@ -3,6 +3,7 @@ import { type Accessor, batch, createMemo } from "solid-js"
 import { createStore, type SetStoreFunction, type Store } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
 import { ServerScope } from "@/utils/server-scope"
+import { Teams } from "@/state/agents"
 
 type StoredProject = { worktree: string; expanded: boolean }
 type StoredServer = string | ServerConnection.HttpBase | ServerConnection.Http
@@ -85,6 +86,9 @@ export function createServerProjects<T extends ServerProjectState>(input: {
         input.scope(),
         current().filter((project) => project.worktree !== directory),
       )
+      // Removing a project from the app also forgets its CHAI team, so it no
+      // longer shows up in the Equipo picker as an orphan.
+      Teams.remove(directory)
     },
     expand(directory: string) {
       const index = current().findIndex((project) => project.worktree === directory)

@@ -2,7 +2,7 @@
 // This is the front-end source of truth for the user's connected AI accounts and
 // per-project team configuration. Real OAuth connection and the .chai/team.json
 // file write are wired later; for the MVP we persist to localStorage.
-import { createStore } from "solid-js/store"
+import { createStore, produce } from "solid-js/store"
 import type { AccountRuntime, Role } from "@chai/orchestrator"
 
 export type AccountStatus = "ready" | "pending" | "unconfigured"
@@ -186,6 +186,13 @@ export const Teams = {
   },
   get: (directory: string): TeamConfig | undefined => teamStore[directory],
   list: (): TeamConfig[] => Object.values(teamStore),
+  /** Forget a project's team (e.g. when its folder is removed from the app). */
+  remove: (directory: string): boolean => {
+    if (!directory) return false
+    setTeamStore(produce((s) => void delete s[directory]))
+    hydrated.delete(directory)
+    return persistTeams()
+  },
   /** Refresh the cache for a directory from its .chai/team.json (file wins).
    *  Runs at most once per directory; pass platform.readProjectFile as `read`. */
   hydrate: async (
