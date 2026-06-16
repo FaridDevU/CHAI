@@ -1,5 +1,17 @@
 import { describe, expect, test } from "bun:test"
-import { buildKimiInvocation, parseKimiStreamEvent, parseKimiStreamLine } from "./kimi-runner"
+import { buildKimiInvocation, kimiPermissionMode, parseKimiStreamEvent, parseKimiStreamLine } from "./kimi-runner"
+
+describe("kimiPermissionMode", () => {
+  test("computer_control grants yolo (total freedom)", () => {
+    expect(kimiPermissionMode(["read_project", "computer_control"])).toBe("yolo")
+  })
+  test("run/edit grant auto, read-only stays default", () => {
+    expect(kimiPermissionMode(["run_commands"])).toBe("auto")
+    expect(kimiPermissionMode(["edit_project"])).toBe("auto")
+    expect(kimiPermissionMode(["read_project"])).toBe("default")
+    expect(kimiPermissionMode([])).toBe("default")
+  })
+})
 
 describe("buildKimiInvocation", () => {
   test("isolates account via KIMI_CODE_HOME and project via cwd, folds role into prompt", () => {

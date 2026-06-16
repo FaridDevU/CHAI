@@ -205,6 +205,46 @@ const createPlatform = (): Platform => {
       }
       return window.api.runClaudeAgent(runId, plain)
     },
+    runAccountDiagnostic(spec) {
+      const plain = {
+        provider: spec.provider,
+        kind: spec.kind,
+        args: [...spec.args],
+        cwd: spec.cwd,
+        timeoutMs: spec.timeoutMs,
+        runtime: {
+          accountId: spec.runtime.accountId,
+          provider: spec.runtime.provider,
+          profilePath: spec.runtime.profilePath,
+          homePath: spec.runtime.homePath,
+          configPath: spec.runtime.configPath,
+          tempPath: spec.runtime.tempPath,
+          env: { ...spec.runtime.env },
+          isolation: spec.runtime.isolation,
+          isolated: spec.runtime.isolated,
+          reason: spec.runtime.reason,
+        },
+      }
+      return window.api.runAccountDiagnostic(plain)
+    },
+    readAccountModels(spec) {
+      const plain = {
+        provider: spec.provider,
+        runtime: {
+          accountId: spec.runtime.accountId,
+          provider: spec.runtime.provider,
+          profilePath: spec.runtime.profilePath,
+          homePath: spec.runtime.homePath,
+          configPath: spec.runtime.configPath,
+          tempPath: spec.runtime.tempPath,
+          env: { ...spec.runtime.env },
+          isolation: spec.runtime.isolation,
+          isolated: spec.runtime.isolated,
+          reason: spec.runtime.reason,
+        },
+      }
+      return window.api.readAccountModels(plain)
+    },
     cancelClaudeAgent(runId) {
       return window.api.cancelClaudeAgent(runId)
     },

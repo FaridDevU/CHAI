@@ -1325,6 +1325,7 @@ export class ProjectTeamRuntime {
         runClaudeAgent: this.deps.runClaudeAgent,
         byAccountId,
         computerControl: this.team.computerControl,
+        modelForAgent: (agent) => agent.model,
         sessionForAgent: (agent) => this.cliSessions[agent.accountId] ?? this.sessionRecords[agent.accountId]?.sessionId,
         onSession: (agent, sessionId) => {
           this.cliSessions[agent.accountId] = sessionId

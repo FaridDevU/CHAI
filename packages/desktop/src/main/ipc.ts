@@ -8,7 +8,9 @@ import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 import type { FatalRendererError, IsolatedSubscriptionLoginInput, ServerReadyData, TitlebarTheme } from "../preload/types"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { runClaudeAgent, cancelClaudeAgent } from "./claude-runner"
-import type { ClaudeAgentSpec } from "@chai/orchestrator"
+import type { AccountDiagnosticSpec, AccountModelsSpec, ClaudeAgentSpec } from "@chai/orchestrator"
+import { runAccountDiagnostic } from "./account-diagnostics"
+import { readAccountModels } from "./account-models"
 import { assertAttachmentBudget, createPickedFileAuthorizations } from "./attachment-picker"
 import { getStore } from "./store"
 import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
@@ -316,6 +318,12 @@ export function registerIpcHandlers(deps: Deps) {
     runClaudeAgent(runId, spec, (agentEvent) =>
       event.sender.send("claude-agent-event", { runId, event: agentEvent }),
     ),
+  )
+  ipcMain.handle("run-account-diagnostic", (_event: IpcMainInvokeEvent, spec: AccountDiagnosticSpec) =>
+    runAccountDiagnostic(spec),
+  )
+  ipcMain.handle("read-account-models", (_event: IpcMainInvokeEvent, spec: AccountModelsSpec) =>
+    readAccountModels(spec),
   )
   ipcMain.handle("cancel-claude-agent", (_event: IpcMainInvokeEvent, runId: string) => cancelClaudeAgent(runId))
 

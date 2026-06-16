@@ -86,6 +86,7 @@ export type TeamAgent = {
   provider: string
   account: string
   role: Role
+  model?: string
   permissions: string[]
   runtime?: AccountRuntime
 }

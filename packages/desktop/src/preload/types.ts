@@ -1,7 +1,15 @@
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 import type { WslServersPlatform } from "@opencode-ai/app/wsl/types"
 import type { UpdaterState } from "@opencode-ai/app/updater"
-import type { ClaudeAgentSpec, ClaudeRunEvent, ClaudeRunResult } from "@chai/orchestrator"
+import type {
+  AccountDiagnosticResult,
+  AccountDiagnosticSpec,
+  AccountModelOption,
+  AccountModelsSpec,
+  ClaudeAgentSpec,
+  ClaudeRunEvent,
+  ClaudeRunResult,
+} from "@chai/orchestrator"
 export type {
   WslDistroProbe,
   WslInstalledDistro,
@@ -98,6 +106,8 @@ export type ElectronAPI = {
   ensureRuntimeDir: (dir: string) => Promise<string>
   deleteAccountRuntime: (dir: string) => Promise<string>
   runClaudeAgent: (runId: string, spec: ClaudeAgentSpec) => Promise<ClaudeRunResult>
+  runAccountDiagnostic: (spec: AccountDiagnosticSpec) => Promise<AccountDiagnosticResult>
+  readAccountModels: (spec: AccountModelsSpec) => Promise<AccountModelOption[]>
   cancelClaudeAgent: (runId: string) => Promise<void>
   onClaudeAgentEvent: (callback: (payload: { runId: string; event: ClaudeRunEvent }) => void) => () => void
   openLink: (url: string) => void

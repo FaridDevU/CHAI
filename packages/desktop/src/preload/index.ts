@@ -98,6 +98,8 @@ const api: ElectronAPI = {
   ensureRuntimeDir: (dir) => ipcRenderer.invoke("ensure-runtime-dir", dir),
   deleteAccountRuntime: (dir) => ipcRenderer.invoke("delete-account-runtime", dir),
   runClaudeAgent: (runId, spec) => ipcRenderer.invoke("run-claude-agent", runId, spec),
+  runAccountDiagnostic: (spec) => ipcRenderer.invoke("run-account-diagnostic", spec),
+  readAccountModels: (spec) => ipcRenderer.invoke("read-account-models", spec),
   cancelClaudeAgent: (runId) => ipcRenderer.invoke("cancel-claude-agent", runId),
   onClaudeAgentEvent: (callback) => {
     const listener = (_event: unknown, payload: { runId: string; event: unknown }) => callback(payload as any)

@@ -1,12 +1,13 @@
 import spawn from "cross-spawn"
 import type { ChildProcess } from "node:child_process"
-import { existsSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { delimiter, dirname, join } from "node:path"
 import {
   buildClaudeInvocation,
   buildCodexInvocation,
   buildKimiInvocation,
+  kimiPermissionMode,
   parseClaudeStreamLine,
   parseCodexStreamLine,
   parseKimiStreamLine,
@@ -17,6 +18,36 @@ import { getLogger } from "./logging"
 
 // One child per run id, so a run can be cancelled by id.
 const running = new Map<string, ChildProcess>()
+
+/**
+ * Kimi's print mode can't take a `--yolo`/`--auto` flag, so grant permissions
+ * by writing `default_permission_mode` into the account's isolated config.toml
+ * right before launch. It's a top-level TOML key, so we replace an existing line
+ * or insert one ahead of the first `[table]`. Rewritten every run from the
+ * agent's current permissions; runs for one account are sequential, so there's
+ * no race. Best-effort — a write failure must not block the agent.
+ */
+function applyKimiPermissionMode(configDir: string, permissions: string[] = []): void {
+  const mode = kimiPermissionMode(permissions)
+  const file = join(configDir, "config.toml")
+  const line = `default_permission_mode = "${mode}"`
+  try {
+    mkdirSync(configDir, { recursive: true })
+    let content = existsSync(file) ? readFileSync(file, "utf8") : ""
+    if (/^\s*default_permission_mode\s*=.*$/m.test(content)) {
+      content = content.replace(/^\s*default_permission_mode\s*=.*$/m, line)
+    } else {
+      const firstTable = content.search(/^\s*\[/m)
+      content =
+        firstTable === -1
+          ? `${content}${content && !content.endsWith("\n") ? "\n" : ""}${line}\n`
+          : `${content.slice(0, firstTable)}${line}\n${content.slice(firstTable)}`
+    }
+    writeFileSync(file, content, "utf8")
+  } catch (err) {
+    getLogger()?.info(`[agent kimi] could not set permission mode: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
 
 /**
  * Resolve the agent CLI to a runnable path WITHOUT relying on PATH. A desktop app
@@ -92,6 +123,8 @@ export function runClaudeAgent(
   const { command, extraPath } = resolveCliCommand(cli)
   const env: Record<string, string | undefined> = { ...process.env, ...inv.env }
   if (extraPath.length) env.PATH = [...extraPath, env.PATH ?? env.Path ?? ""].filter(Boolean).join(delimiter)
+  // Kimi grants permissions via config, not a flag (print mode rejects --yolo).
+  if (cli === "kimi" && inv.env?.KIMI_CODE_HOME) applyKimiPermissionMode(inv.env.KIMI_CODE_HOME, spec.permissions)
 
   return new Promise<ClaudeRunResult>((resolve, reject) => {
     let child: ChildProcess

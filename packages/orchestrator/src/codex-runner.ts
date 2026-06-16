@@ -57,6 +57,10 @@ export function buildCodexInvocation(spec: ClaudeAgentSpec, opts?: { command?: s
   const sandbox = mapPermissionsToCodexSandbox(spec.permissions)
   if (sandbox === "danger-full-access") {
     args.push("--dangerously-bypass-approvals-and-sandbox")
+    // "Permitido" = total freedom, which also means live internet access. `exec`
+    // has no --search flag (that's interactive-only), so enable the web_search
+    // tool via a config override (verified key: `[tools] web_search`).
+    args.push("-c", "tools.web_search=true")
   } else {
     args.push("-s", sandbox)
   }

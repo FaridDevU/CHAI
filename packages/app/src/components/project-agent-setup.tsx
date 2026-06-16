@@ -6,7 +6,7 @@ import { Icon } from "@opencode-ai/ui/icon"
 import { For, Show, createMemo, createSignal } from "solid-js"
 import { createStore } from "solid-js/store"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { accountProviderId, createAccountRuntime, type Role } from "@chai/orchestrator"
+import { accountProviderId, createAccountRuntime, parseCliModels, type AccountRuntime, type Role } from "@chai/orchestrator"
 import { useGlobal } from "@/context/global"
 import { usePlatform } from "@/context/platform"
 import { ServerConnection } from "@/context/server"
@@ -36,8 +36,81 @@ const ROLE_MODES: { id: RoleMode; label: string; hint: string }[] = [
   { id: "auto", label: "Automático", hint: "CHAI evalúa a los agentes y asigna roles." },
   { id: "hybrid", label: "Híbrido", hint: "Tú fijas algunos roles y CHAI decide el resto." },
 ]
-const STEPS = ["Detalles", "Equipo", "Roles", "Resumen"]
+const STEPS = ["Detalles", "Equipo", "Modelos", "Roles", "Resumen"]
 const DEFAULT_PERMS = ["read_project", "edit_project"]
+// Listing models differs per CLI (verified against the real binaries):
+//  - kimi exposes `provider list --json`; the alias you pass to -m is the KEY of
+//    the JSON `models` map (e.g. "kimi-code/kimi-for-coding").
+//  - codex and claude have NO list command — the model is just a -m/--model alias,
+//    so there's nothing to "detect". We surface their known subscription aliases
+//    and let the user type a custom one.
+const MODEL_COMMANDS: Record<string, string[][]> = {
+  kimi: [["provider", "list", "--json"]],
+}
+// A selectable model. `disabled` ones are shown greyed-out (e.g. Fable, which
+// the account isn't entitled to) so the UI mirrors the real CLI picker.
+type ModelOption = { value: string; label?: string; disabled?: boolean }
+
+// Known models per provider, matching what each CLI's own picker shows.
+// Claude/Codex have no list command, so these mirror the current pickers:
+//  - claude: 3 Opus, 2 Sonnet, Haiku; Fable flagged disabled.
+//  - codex: the visible slugs from `~/.codex/models_cache.json` (the hidden
+//    `codex-auto-review` entry is omitted).
+// kimi DOES list models (`provider list --json`), so its entry is only a
+// fallback for when detection can't run.
+const KNOWN_MODELS: Record<string, ModelOption[]> = {
+  codex: [
+    { value: "gpt-5.5", label: "GPT-5.5" },
+    { value: "gpt-5.4", label: "GPT-5.4" },
+    { value: "gpt-5.4-mini", label: "GPT-5.4-Mini" },
+  ],
+  claude: [
+    { value: "claude-opus-4-8", label: "Opus 4.8" },
+    { value: "claude-opus-4-7", label: "Opus 4.7" },
+    { value: "claude-opus-4-6", label: "Opus 4.6" },
+    { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+    { value: "claude-sonnet-4-5", label: "Sonnet 4.5" },
+    { value: "claude-haiku-4-5", label: "Haiku 4.5" },
+    { value: "claude-fable-5", label: "Fable 5", disabled: true },
+  ],
+  kimi: [{ value: "kimi-code/kimi-for-coding", label: "K2.7 Code" }],
+}
+
+// kimi prints a JSON config whose `models` keys ARE the -m aliases (and carry a
+// displayName); other CLIs fall back to the tolerant text parser.
+function parseModelsForProvider(provider: string, raw: string): ModelOption[] {
+  if (provider === "kimi") {
+    try {
+      const json = JSON.parse(raw) as { models?: Record<string, { displayName?: string }> }
+      if (json?.models && typeof json.models === "object") {
+        return Object.entries(json.models).map(([value, info]) => ({ value, label: info?.displayName }))
+      }
+    } catch {
+      // fall through to the generic parser
+    }
+  }
+  return parseCliModels(raw).map((value) => ({ value }))
+}
+
+function firstEnabled(models: ModelOption[]): string | undefined {
+  return models.find((m) => !m.disabled)?.value
+}
+
+// Overlay account-read options onto the curated base (Claude): a fetched entry
+// updates the matching base model's label/disabled, or is appended if new.
+function mergeModelOptions(base: ModelOption[], fetched: ModelOption[]): ModelOption[] {
+  const out = base.map((m) => ({ ...m }))
+  for (const f of fetched) {
+    const existing = out.find((m) => m.value === f.value)
+    if (existing) {
+      if (f.label) existing.label = f.label
+      if (f.disabled !== undefined) existing.disabled = f.disabled
+    } else {
+      out.push({ ...f })
+    }
+  }
+  return out
+}
 
 export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
   const dialog = useDialog()
@@ -57,6 +130,10 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
     roleMode: "manual" as RoleMode,
     roles: {} as Record<string, Role>,
     perms: {} as Record<string, string[]>,
+    models: {} as Record<string, string>,
+    detectedModels: {} as Record<string, ModelOption[]>,
+    modelOutput: {} as Record<string, string>,
+    detectingModels: {} as Record<string, boolean>,
     visualTesting: true,
     computerControl: "approval_required" as TeamConfig["computerControl"],
   })
@@ -123,10 +200,89 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
     dialog.show(() => <DialogAccounts />)
   }
 
+  async function runtimeForAccount(acc: { id: string; provider: string }): Promise<AccountRuntime> {
+    const runtimeRoot = (await window.api?.getChaiRuntimeRoot?.().catch(() => undefined)) ?? `${s.directory}/.chai/runtimes`
+    return createAccountRuntime({ accountId: acc.id, provider: acc.provider }, { root: runtimeRoot })
+  }
+
+  async function detectModels(acc: { id: string; provider: string; label: string }) {
+    if (!platform.runAccountDiagnostic) {
+      showToast({ title: "La deteccion de modelos requiere CHAI Desktop." })
+      return
+    }
+    set("detectingModels", acc.id, true)
+    set("modelOutput", acc.id, "")
+    const known = KNOWN_MODELS[acc.provider] ?? []
+    try {
+      const commands = MODEL_COMMANDS[acc.provider] ?? []
+      // CLIs without a real list command (codex, claude) instead keep a local
+      // model cache on disk. Read it from the isolated runtime: Codex's cache is
+      // the authoritative full list; Claude's only holds extra/disabled entries,
+      // so it's merged onto the curated base. Falls back to curated if absent.
+      if (commands.length === 0) {
+        let options = known
+        try {
+          const runtime = await runtimeForAccount(acc)
+          const fetched = (await platform.readAccountModels?.({ provider: acc.provider, runtime })) ?? []
+          if (fetched.length > 0) {
+            options = acc.provider === "codex" ? fetched : mergeModelOptions(known, fetched)
+          }
+        } catch {
+          // best-effort: keep the curated list if the cache can't be read
+        }
+        set("detectedModels", acc.id, options)
+        const fallback = firstEnabled(options)
+        if (fallback && !s.models[acc.id]) set("models", acc.id, fallback)
+        return
+      }
+      const runtime = await runtimeForAccount(acc)
+      const outputs: string[] = []
+      for (const args of commands) {
+        const result = await platform.runAccountDiagnostic({
+          provider: acc.provider,
+          runtime,
+          kind: "models",
+          args,
+          cwd: runtime.profilePath,
+          timeoutMs: 12_000,
+        })
+        const raw = [result.stdout, result.stderr].filter(Boolean).join("\n")
+        outputs.push([`$ ${acc.provider} ${args.join(" ")}`, raw].filter(Boolean).join("\n"))
+        const models = parseModelsForProvider(acc.provider, raw)
+        if (models.length > 0) {
+          set("detectedModels", acc.id, models)
+          const first = firstEnabled(models)
+          if (first && !s.models[acc.id]) set("models", acc.id, first)
+          return
+        }
+      }
+      // Detection ran but found nothing: fall back to known aliases + keep output.
+      set("detectedModels", acc.id, known)
+      const fallback = firstEnabled(known)
+      if (fallback && !s.models[acc.id]) set("models", acc.id, fallback)
+      set("modelOutput", acc.id, outputs.join("\n\n").slice(-4000))
+      showToast({
+        title: `No se detectaron modelos para ${acc.label}`,
+        description: "CHAI mostro los modelos conocidos y guardo la salida del CLI.",
+      })
+    } catch (err) {
+      set("detectedModels", acc.id, known)
+      const fallback = firstEnabled(known)
+      if (fallback && !s.models[acc.id]) set("models", acc.id, fallback)
+      set("modelOutput", acc.id, err instanceof Error ? err.message : String(err))
+      showToast({
+        title: `No se pudo detectar modelos para ${acc.label}`,
+        description: err instanceof Error ? err.message : String(err),
+      })
+    } finally {
+      set("detectingModels", acc.id, false)
+    }
+  }
+
   const canNext = createMemo(() => {
     if (s.step === 0) return s.name.trim().length > 0 && s.directory.length > 0
     if (s.step === 1) return s.selected.length > 0
-    if (s.step === 2) {
+    if (s.step === 3) {
       if (s.roleMode === "auto") return true
       return selectedAccounts().every((a) => !!s.roles[a.id])
     }
@@ -150,6 +306,7 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
         account: a.label,
         role: s.roleMode === "auto" ? "auto" : s.roles[a.id] ?? ROLES[0].id,
         permissions: s.perms[a.id] ?? [...DEFAULT_PERMS],
+        model: s.models[a.id] || undefined,
         runtime: createAccountRuntime(
           { accountId: a.id, provider: a.provider },
           { root: runtimeRoot },
@@ -406,8 +563,8 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
           </div>
         </Show>
 
-        {/* STEP 2 — roles & permissions */}
-        <Show when={s.step === 2}>
+        {/* STEP 3 — roles & permissions */}
+        <Show when={s.step === 3}>
           <div class="flex flex-col gap-4">
             <div class="flex flex-col gap-1.5">
               <span class="text-12-medium text-text-weak">Modo de roles</span>
@@ -484,8 +641,100 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
           </div>
         </Show>
 
-        {/* STEP 3 — summary */}
-        <Show when={s.step === 3}>
+        {/* STEP 2 — models */}
+        <Show when={s.step === 2}>
+          <div class="flex flex-col gap-4">
+            <div class="flex flex-col gap-1">
+              <span class="text-12-medium text-text-strong">Modelos por agente</span>
+              <span class="text-11-regular text-text-weak">
+                CHAI consulta el CLI en el runtime aislado y crea botones con los modelos que detecte.
+              </span>
+            </div>
+            <For each={selectedAccounts()}>
+              {(acc) => {
+                const models = () => s.detectedModels[acc.id] ?? []
+                const selected = () => s.models[acc.id]
+                return (
+                  <div class="flex flex-col gap-2 rounded-md border border-border-weak-base p-3">
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="flex min-w-0 flex-col">
+                        <span class="truncate text-13-medium text-text-strong">{acc.label}</span>
+                        <span class="text-11-regular text-text-weak">{providerLabel(acc.provider)}</span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="small"
+                        onClick={() => detectModels(acc)}
+                        disabled={!!s.detectingModels[acc.id]}
+                      >
+                        {s.detectingModels[acc.id] ? "Detectando..." : "Detectar modelos"}
+                      </Button>
+                    </div>
+                    <Show
+                      when={models().length > 0}
+                      fallback={
+                        <div class="rounded border border-border-weak-base px-3 py-2 text-11-regular text-text-weak">
+                          Pulsa "Detectar modelos" para ver los modelos disponibles, o escribe uno abajo.
+                        </div>
+                      }
+                    >
+                      <div class="flex flex-wrap gap-1.5">
+                        <For each={models()}>
+                          {(model) => (
+                            <button
+                              type="button"
+                              disabled={model.disabled}
+                              title={model.disabled ? `${model.value} no está disponible en esta cuenta` : model.value}
+                              classList={{
+                                "px-2.5 py-1 rounded-md text-11-medium border transition-colors": true,
+                                "border-icon-strong-base text-text-strong": !model.disabled && selected() === model.value,
+                                "border-border-weak-base text-text-weak hover:border-border-strong":
+                                  !model.disabled && selected() !== model.value,
+                                "border-border-weak-base text-text-disabled line-through cursor-not-allowed opacity-60":
+                                  !!model.disabled,
+                              }}
+                              onClick={() => !model.disabled && set("models", acc.id, model.value)}
+                            >
+                              {model.label ?? model.value}
+                              {model.disabled ? " (no disponible)" : ""}
+                            </button>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                    <div class="flex flex-col gap-1">
+                      <span class="text-10-regular text-text-weak">O escribe un modelo manualmente</span>
+                      <input
+                        type="text"
+                        spellcheck={false}
+                        placeholder={KNOWN_MODELS[acc.provider]?.[0]?.value ?? "nombre-del-modelo"}
+                        value={selected() ?? ""}
+                        onInput={(e) => set("models", acc.id, e.currentTarget.value)}
+                        class="rounded-md border border-border-weak-base bg-transparent px-2 py-1.5 text-12-regular text-text-strong placeholder:text-text-weak"
+                      />
+                    </div>
+                    <Show when={selected()}>
+                      {(model) => <span class="text-11-regular text-text-weak">Modelo elegido: {model()}</span>}
+                    </Show>
+                    <Show when={s.modelOutput[acc.id]}>
+                      {(output) => (
+                        <details class="rounded border border-border-weak-base px-3 py-2">
+                          <summary class="cursor-pointer text-11-medium text-text-weak">Salida de diagnostico</summary>
+                          <pre class="mt-2 max-h-32 overflow-auto whitespace-pre-wrap text-10-regular text-text-weak">
+                            {output()}
+                          </pre>
+                        </details>
+                      )}
+                    </Show>
+                  </div>
+                )
+              }}
+            </For>
+          </div>
+        </Show>
+
+        <Show when={s.step === 4}>
           <div class="flex flex-col gap-4">
             <div class="flex flex-col gap-1 rounded-md border border-border-weak-base p-3 text-12-regular">
               <div class="flex justify-between">
@@ -509,9 +758,12 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
               <span class="text-12-medium text-text-weak">Equipo ({selectedAccounts().length})</span>
               <For each={selectedAccounts()}>
                 {(acc) => (
-                  <div class="flex items-center justify-between rounded-md border border-border-weak-base px-3 py-2 text-12-regular">
+                  <div class="flex items-center justify-between gap-3 rounded-md border border-border-weak-base px-3 py-2 text-12-regular">
                     <span class="text-text-strong">{acc.label}</span>
-                    <span class="text-text-weak">{s.roleMode === "auto" ? "rol automático" : roleLabel(s.roles[acc.id] ?? ROLES[0].id)}</span>
+                    <span class="text-text-weak text-right">
+                      {s.roleMode === "auto" ? "rol automático" : roleLabel(s.roles[acc.id] ?? ROLES[0].id)}
+                      {s.models[acc.id] ? ` · ${s.models[acc.id]}` : ""}
+                    </span>
                   </div>
                 )}
               </For>

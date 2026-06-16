@@ -31,7 +31,8 @@ export type {
   ClaudeRunResult,
   ClaudePermissionMode,
 } from "./claude-runner"
-export { buildKimiInvocation, parseKimiStreamEvent, parseKimiStreamLine } from "./kimi-runner"
+export { buildKimiInvocation, parseKimiStreamEvent, parseKimiStreamLine, kimiPermissionMode } from "./kimi-runner"
+export type { KimiPermissionMode } from "./kimi-runner"
 export {
   buildCodexInvocation,
   mapPermissionsToCodexSandbox,
@@ -56,3 +57,7 @@ export type {
   TeamActionType,
   TeamEnvelope,
 } from "./team-protocol"
+export { parseCliModels } from "./account-diagnostics"
+export type { AccountDiagnosticKind, AccountDiagnosticResult, AccountDiagnosticSpec } from "./account-diagnostics"
+export { parseCodexModelsCache, parseClaudeModelOptions, modelCacheEnvKey } from "./account-models"
+export type { AccountModelOption, AccountModelsSpec } from "./account-models"

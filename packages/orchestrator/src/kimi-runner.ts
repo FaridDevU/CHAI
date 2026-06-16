@@ -28,6 +28,24 @@
 
 import type { ClaudeAgentSpec, ClaudeInvocation, ClaudeRunEvent } from "./claude-runner"
 
+export type KimiPermissionMode = "yolo" | "auto" | "default"
+
+/**
+ * Kimi's print mode (`-p`) rejects the `--yolo`/`--auto` flags, so the only way
+ * to grant unattended permission is the `default_permission_mode` config key
+ * (values: manual | auto | yolo). Map CHAI permissions onto it:
+ *  - computer_control ("Permitido") → yolo: approve everything, no restrictions.
+ *  - run_commands / edit_project    → auto: auto permission mode.
+ *  - otherwise                      → default.
+ * The desktop runner writes this into the account's isolated config.toml before
+ * launching kimi (kimi's web search/fetch services are already built in).
+ */
+export function kimiPermissionMode(permissions: string[] = []): KimiPermissionMode {
+  if (permissions.includes("computer_control")) return "yolo"
+  if (permissions.includes("run_commands") || permissions.includes("edit_project")) return "auto"
+  return "default"
+}
+
 /** Build the headless `kimi` invocation for one agent task. */
 export function buildKimiInvocation(spec: ClaudeAgentSpec, opts?: { command?: string }): ClaudeInvocation {
   // Kimi has no system-prompt flag, so fold the role into the prompt text.

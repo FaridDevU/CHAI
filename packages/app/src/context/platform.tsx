@@ -5,7 +5,15 @@ import type { DesktopMenuAction } from "../desktop-menu"
 import { ServerConnection } from "./server"
 import type { WslServersPlatform } from "../wsl/types"
 import type { UpdaterPlatform } from "../updater"
-import type { ClaudeAgentSpec, ClaudeRunEvent, ClaudeRunResult } from "@chai/orchestrator"
+import type {
+  AccountDiagnosticResult,
+  AccountDiagnosticSpec,
+  AccountModelOption,
+  AccountModelsSpec,
+  ClaudeAgentSpec,
+  ClaudeRunEvent,
+  ClaudeRunResult,
+} from "@chai/orchestrator"
 
 type PickerPaths = string | string[] | null
 type OpenDirectoryPickerOptions = { title?: string; multiple?: boolean }
@@ -79,6 +87,11 @@ type PlatformBase = {
   /** Run the real `claude` CLI for one agent task (desktop only). Streams events
    *  via onClaudeAgentEvent and resolves with the final result. */
   runClaudeAgent?(runId: string, spec: ClaudeAgentSpec): Promise<ClaudeRunResult>
+  /** Run a short diagnostic command in an account's isolated runtime (desktop only). */
+  runAccountDiagnostic?(spec: AccountDiagnosticSpec): Promise<AccountDiagnosticResult>
+  /** Read a provider's local model cache from its isolated runtime (desktop only).
+   *  Resolves [] when the cache is missing/unreadable. */
+  readAccountModels?(spec: AccountModelsSpec): Promise<AccountModelOption[]>
   /** Cancel a running claude agent by run id (desktop only). */
   cancelClaudeAgent?(runId: string): Promise<void>
   /** Subscribe to streamed claude agent events; returns an unsubscribe fn. */

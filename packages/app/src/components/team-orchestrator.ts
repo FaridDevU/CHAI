@@ -244,7 +244,7 @@ export function createTeamTransport(input: {
 
       await activateAccount(input.serverSDK, input.directory, providerID, teamAgent.accountId)
 
-      const model = input.modelForProvider(providerID)
+      const model = teamAgent.model ? { providerID, modelID: teamAgent.model } : input.modelForProvider(providerID)
       if (!model) throw new Error(`No hay modelo disponible para ${providerID}`)
 
       const sessionID = input.sessionForAgent(teamAgent) ?? (await input.createSessionForAgent(teamAgent))
