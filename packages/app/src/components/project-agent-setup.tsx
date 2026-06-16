@@ -198,30 +198,29 @@ export function ProjectAgentSetup(props: { server: ServerConnection.Any }) {
     // a session created on demand by the team runtime when they first run.
 
     // Session housekeeping for the project (best-effort; never blocks starting):
-    //  1. Delete leftover per-agent "<role> · <account>" sessions (CLI agents run
-    //     headless and never needed an opencode session — pure clutter).
-    //  2. Ensure the project has ONE working session named after it, so the work
-    //     is saved and the user can resume later. Reused if it already exists.
+    // leave the folder with ONLY this project's own working session, so a project
+    // started on a reused folder doesn't keep showing leftover chats (old per-agent
+    // sessions, or stale provider test chats like the "new session" from when Codex
+    // ran through the API). The kept session (named after the project) is where work
+    // is saved so the user can resume later; it's created if it doesn't exist yet.
     const projectTitle = s.name.trim() || getFilename(s.directory)
     try {
-      const accountLabels = selectedAccounts().map((a) => a.label)
       const listed = await ctx.sdk.client.session.list({ directory: s.directory } as Parameters<
         typeof ctx.sdk.client.session.list
       >[0])
       const items = (Array.isArray(listed) ? listed : (listed as { data?: unknown }).data) as
         | { id?: string; title?: string; parentID?: string }[]
         | undefined
-      let hasProjectSession = false
+      let keptProjectSession = false
       for (const sess of items ?? []) {
         if (!sess?.id || sess.parentID) continue
-        const title = sess.title ?? ""
-        if (accountLabels.some((label) => title.endsWith(` · ${label}`))) {
-          await ctx.sdk.client.session.delete({ sessionID: sess.id }).catch(() => undefined)
-        } else if (title === projectTitle) {
-          hasProjectSession = true
+        if ((sess.title ?? "") === projectTitle && !keptProjectSession) {
+          keptProjectSession = true
+          continue
         }
+        await ctx.sdk.client.session.delete({ sessionID: sess.id }).catch(() => undefined)
       }
-      if (!hasProjectSession) {
+      if (!keptProjectSession) {
         await ctx.sdk.client.session
           .create({ directory: s.directory, title: projectTitle } as Parameters<
             typeof ctx.sdk.client.session.create
