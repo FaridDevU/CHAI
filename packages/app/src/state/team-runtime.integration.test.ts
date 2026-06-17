@@ -116,3 +116,49 @@ describe("team runtime smoke: create -> onboard -> team -> reopen", () => {
     expect(reopened.tasks().length).toBe(first.tasks().length)
   })
 })
+
+describe("team runtime: user interjects in the role debate", () => {
+  test("a queued user message reaches the debate and the feed", async () => {
+    const fs = memFs()
+    const agents: TeamAgent[] = [
+      { accountId: "a", provider: "claude", account: "Uno", role: "auto", permissions: ["read_project"] },
+      { accountId: "b", provider: "claude", account: "Dos", role: "auto", permissions: ["read_project"] },
+    ]
+    const config: TeamConfig = {
+      projectName: "Debate",
+      directory: "/proj/debate",
+      stack: "ts",
+      agents,
+      roleMode: "auto",
+      visualTesting: false,
+      computerControl: "off",
+    }
+
+    const prompts: string[] = []
+    const run = async (_runId: string, spec: ClaudeAgentSpec): Promise<ClaudeRunResult> => {
+      prompts.push(spec.prompt)
+      if (spec.prompt.includes("formando un equipo multi-agente")) {
+        return {
+          text: JSON.stringify({ summary: "perfil", capabilities: ["x"], recommendedRole: "coordinator" }),
+          isError: false,
+          exitCode: 0,
+        }
+      }
+      return { text: "Yo me encargo.\nROL: coordinator", isError: false, exitCode: 0 }
+    }
+
+    const rt = new ProjectTeamRuntime(config, deps(fs, { runClaudeAgent: run }))
+    await rt.ready
+    // The user speaks before the debate loop starts; it must be folded into the
+    // transcript so the agents see it on their next turn.
+    rt.interject("que alguien tome backend y otro la UI")
+    await rt.runOnboarding()
+
+    const debatePrompts = prompts.filter((p) => p.includes("decidir quién toma cada rol"))
+    expect(debatePrompts.length).toBeGreaterThan(0)
+    expect(debatePrompts.some((p) => p.includes("Usuario (interviene): que alguien tome backend y otro la UI"))).toBe(true)
+    expect(rt.messages().some((m) => m.from === "user" && m.text.includes("que alguien tome backend"))).toBe(true)
+    // The agents answering the interjection address the user ("→ Tú"), not a teammate.
+    expect(rt.messages().some((m) => (m.from === "a" || m.from === "b") && m.to === "user")).toBe(true)
+  })
+})

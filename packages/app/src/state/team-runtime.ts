@@ -267,6 +267,8 @@ export class ProjectTeamRuntime {
   private readonly permissionsSignal = createSignal<TeamRuntimePermissionRequest[]>([])
   readonly permissionRequests: Accessor<TeamRuntimePermissionRequest[]> = this.permissionsSignal[0]
   private readonly setPermissionRequests = this.permissionsSignal[1]
+  /** User messages typed into the live role debate, drained by discussRoles. */
+  private userInterjections: string[] = []
 
   constructor(team: TeamConfig, deps: ProjectTeamRuntimeDeps) {
     this.team = team
@@ -325,6 +327,21 @@ export class ProjectTeamRuntime {
 
   resume() {
     if (this.runState() === "paused") this.setRunState("running")
+  }
+
+  /**
+   * The user speaks into the LIVE role debate. The text is queued and folded
+   * into the debate transcript on the next turn (see discussRoles), so the
+   * agents react to it before they settle on roles, and the debate is extended
+   * enough that they actually answer a late intervention. Echoed to the feed
+   * right away as a "Tú → CHAI" line.
+   */
+  interject(text: string) {
+    const clean = text.trim()
+    if (!clean) return
+    this.userInterjections.push(clean)
+    this.orchestrator.router.send({ from: "user", to: COORDINATOR, type: "info", text: clean })
+    this.syncMessages()
   }
 
   async cancelActiveRuns() {
@@ -1196,9 +1213,24 @@ export class ProjectTeamRuntime {
     const transcript: string[] = []
     const minTurns = agents.length * 2 // at least two full rounds, so it's a real back-and-forth
     const maxTurns = agents.length * 4
-    for (let turn = 0; turn < maxTurns; turn++) {
+    // The user can interject mid-debate (interject()): bonusTurns extends the cap
+    // and answerUserUntilTurn holds off settling so the team actually reacts.
+    let bonusTurns = 0
+    let answerUserUntilTurn = -1
+    for (let turn = 0; turn < maxTurns + bonusTurns; turn++) {
       this.assertNotCancelled()
       await this.waitIfPaused()
+      // Fold any user interjections into the transcript so the next speaker reacts
+      // to them before the team settles on roles, and give the debate room to do so.
+      if (this.userInterjections.length) {
+        for (const msg of this.userInterjections.splice(0)) transcript.push(`Usuario (interviene): ${msg}`)
+        bonusTurns = Math.min(bonusTurns + agents.length, maxTurns)
+        answerUserUntilTurn = turn + agents.length
+      }
+      // In the round right after an interjection the agents are answering the USER,
+      // so their reply is addressed to "user" (shown as "→ Tú") instead of the
+      // round-robin teammate — they really are talking to you, not to each other.
+      const answeringUser = turn < answerUserUntilTurn
       const speaker = agents[turn % agents.length]!
       const listener = agents[(turn + 1) % agents.length]!
       if (speaker.accountId === listener.accountId) continue
@@ -1206,7 +1238,7 @@ export class ProjectTeamRuntime {
         .filter((a) => a.accountId !== speaker.accountId)
         .map((a) => a.account)
         .join(", ")
-      const opening = transcript.length === 0
+      const opening = transcript.length === 0 && !answeringUser
       const prompt = [
         `Eres ${speaker.account}, en una conversación de equipo con ${others} para decidir quién toma cada rol.`,
         `Regla: NO puede haber dos personas con el mismo rol. Roles posibles: ${rolesList}.`,
@@ -1214,9 +1246,11 @@ export class ProjectTeamRuntime {
         this.permissionsSentence(speaker),
         `Nadie te dice qué se te da bien: evalúa con honestidad TUS PROPIAS capacidades reales (qué haces mejor y qué peor) y arguméntalo tú mismo, con tu propio conocimiento.`,
         transcript.length ? `Conversación hasta ahora:\n${transcript.join("\n")}` : "",
-        opening
-          ? `Abre tú dirigiéndote a ${listener.account}: di qué rol quieres tomar y cuál NO, y por qué, según lo que de verdad sabes hacer.`
-          : `Continúa el debate de forma genuina: reacciona a lo que dijeron (sobre todo ${listener.account}), defiende tu postura con argumentos propios o cede si te convencen, y avanza hacia un acuerdo donde nadie repita rol. No repitas lo ya dicho: aporta algo nuevo.`,
+        answeringUser
+          ? `El usuario acaba de intervenir (línea "Usuario (interviene):"). Le hablas A ÉL directamente, no a tus compañeros: atiende lo que pide, dile qué rol tomas tú y por qué; después seguirán debatiendo entre ustedes.`
+          : opening
+            ? `Abre tú dirigiéndote a ${listener.account}: di qué rol quieres tomar y cuál NO, y por qué, según lo que de verdad sabes hacer.`
+            : `Continúa el debate de forma genuina: reacciona a lo que dijeron (sobre todo ${listener.account}), defiende tu postura con argumentos propios o cede si te convencen, y avanza hacia un acuerdo donde nadie repita rol. No repitas lo ya dicho: aporta algo nuevo.`,
         `Habla como en un chat real, con tu propio criterio y personalidad; extiéndete lo que necesites. Nada de JSON ni listas con viñetas.`,
         `Al FINAL, en una línea aparte, escribe exactamente "ROL: <id>" con el rol que TÚ tomas (uno de: ${ids.join(", ")}).`,
       ]
@@ -1224,7 +1258,9 @@ export class ProjectTeamRuntime {
         .join("\n")
       this.setAgentState(speaker.accountId, "working")
       const reply = await this.dispatchWithPolicy(speaker.accountId, prompt, {
-        from: listener.accountId,
+        // When answering the user, address the reply to them ("→ Tú"); otherwise
+        // it's part of the agent-to-agent debate, addressed to the next teammate.
+        from: answeringUser ? "user" : listener.accountId,
         type: "pregunta",
         data: { discussion: true },
       })
@@ -1238,8 +1274,9 @@ export class ProjectTeamRuntime {
         const chosen = this.parseRoleAnswer(marker?.[1])
         if (chosen) proposed.set(speaker.accountId, chosen)
       }
-      // Wrap up only after a real discussion (>= minTurns) and once roles are distinct.
-      if (turn + 1 >= minTurns && distinctSettled()) break
+      // Wrap up only after a real discussion (>= minTurns), once roles are distinct,
+      // and never while the team still owes the user a reaction to an interjection.
+      if (turn + 1 >= minTurns && turn >= answerUserUntilTurn && distinctSettled()) break
     }
 
     // Carry what each one settled on into the profiles; assignDistinctRoles enforces uniqueness.
