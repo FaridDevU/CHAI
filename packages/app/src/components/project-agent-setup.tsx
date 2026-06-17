@@ -34,7 +34,6 @@ const COUNTS = ["1", "2", "3", "4", "Personalizado"]
 const ROLE_MODES: { id: RoleMode; label: string; hint: string }[] = [
   { id: "manual", label: "Manual", hint: "Tú eliges el rol de cada agente." },
   { id: "auto", label: "Automático", hint: "CHAI evalúa a los agentes y asigna roles." },
-  { id: "hybrid", label: "Híbrido", hint: "Tú fijas algunos roles y CHAI decide el resto." },
 ]
 const STEPS = ["Detalles", "Equipo", "Modelos", "Roles", "Resumen"]
 const DEFAULT_PERMS = ["read_project", "edit_project"]
