@@ -2,11 +2,12 @@ import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
-import { type ClaudeRunEvent, type Message } from "@chai/orchestrator"
+import { type ClaudeRunEvent, type Message, type Role } from "@chai/orchestrator"
 import {
   Accounts,
   OPENCODE_PROVIDER,
   PERMISSIONS,
+  ROLES,
   Teams,
   agentSessionTitle,
   isCliProvider,
@@ -615,7 +616,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
               <Show when={tab() === "agents"}>
                 <div class="flex flex-col gap-2">
                   <For each={t().agents}>
-                    {(agent, i) => {
+                    {(agent) => {
                       const runtimeState = runtimeStates()[agent.accountId]
                       const st =
                         runtimeState === "working"
@@ -630,7 +631,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                           <div class="flex items-center justify-between">
                             <div class="flex items-center gap-2 min-w-0">
                               <span class="text-13-medium text-text-strong truncate">{agent.account}</span>
-                              <Show when={i() === 0}>
+                              <Show when={agent.role === "coordinator"}>
                                 <span class="text-10-medium px-1.5 py-0.5 rounded bg-surface-base-hover text-text-weak">
                                   coordinador
                                 </span>
@@ -650,7 +651,17 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                           <div class="flex items-center gap-2 text-11-regular text-text-weak">
                             <span>{providerLabel(agent.provider)}</span>
                             <span>·</span>
-                            <span>{roleLabel(agent.role)}</span>
+                            {/* Manual role selector: change a role any time. CHAI keeps
+                                roles distinct (swap) and always keeps a coordinator. */}
+                            <select
+                              class="rounded border border-border-weak-base bg-transparent px-1 py-0.5 text-11-regular text-text-strong outline-none"
+                              value={agent.role}
+                              onChange={(event) => runtime()?.setAgentRole(agent.accountId, event.currentTarget.value as Role)}
+                            >
+                              <For each={ROLES.filter((r) => r.id !== "auto")}>
+                                {(r) => <option value={r.id}>{r.label}</option>}
+                              </For>
+                            </select>
                             <span>-</span>
                             <span class="truncate">{runtimeLabel(agent)}</span>
                             <Show when={sessionForAgent(agent)}>
