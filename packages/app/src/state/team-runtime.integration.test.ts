@@ -162,3 +162,43 @@ describe("team runtime: user interjects in the role debate", () => {
     expect(rt.messages().some((m) => (m.from === "a" || m.from === "b") && m.to === "user")).toBe(true)
   })
 })
+
+describe("team runtime: there is always a coordinator", () => {
+  test("assigns a coordinator even when nobody picks one in the debate", async () => {
+    const fs = memFs()
+    const agents: TeamAgent[] = [
+      { accountId: "a", provider: "claude", account: "Uno", role: "auto", permissions: ["read_project"] },
+      { accountId: "b", provider: "claude", account: "Dos", role: "auto", permissions: ["read_project"] },
+    ]
+    const config: TeamConfig = {
+      projectName: "Coord",
+      directory: "/proj/coord",
+      stack: "ts",
+      agents,
+      roleMode: "auto",
+      visualTesting: false,
+      computerControl: "off",
+    }
+
+    // Both agents only ever want "frontend" — neither claims coordinator.
+    const run = async (_runId: string, spec: ClaudeAgentSpec): Promise<ClaudeRunResult> => {
+      if (spec.prompt.includes("formando un equipo multi-agente")) {
+        return {
+          text: JSON.stringify({ summary: "perfil", capabilities: ["ui"], recommendedRole: "frontend" }),
+          isError: false,
+          exitCode: 0,
+        }
+      }
+      return { text: "Quiero frontend.\nROL: frontend", isError: false, exitCode: 0 }
+    }
+
+    const rt = new ProjectTeamRuntime(config, deps(fs, { runClaudeAgent: run }))
+    await rt.ready
+    await rt.runOnboarding()
+    await rt.flushPersistence()
+
+    const team = JSON.parse(fs.get(config.directory, ".chai/team.json") ?? "{}") as TeamConfig
+    const roles = team.agents.map((a) => a.role)
+    expect(roles).toContain("coordinator")
+  })
+})

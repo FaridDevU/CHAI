@@ -1152,6 +1152,15 @@ export class ProjectTeamRuntime {
       taken.add(role)
       result.set(p.accountId, role)
     }
+    // A multi-agent team must ALWAYS have a coordinator — it's who the user talks
+    // to to steer the OTHER agents. If nobody landed on it, hand it to the first
+    // agent that isn't pinned to a role (hybrid) — or just the first one. (A solo
+    // agent needs no coordinator: there's nothing to coordinate.)
+    if (prefs.length >= 2 && ![...result.values()].includes("coordinator")) {
+      const fixed = new Set(prefs.filter((p) => p.fixed && p.role && p.role !== "auto").map((p) => p.accountId))
+      const pick = prefs.find((p) => !fixed.has(p.accountId)) ?? prefs[0]
+      if (pick) result.set(pick.accountId, "coordinator")
+    }
     return result
   }
 
