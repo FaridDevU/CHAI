@@ -32,14 +32,6 @@ const runtimeStateLabel = {
   offline: "Desconectado",
 } as const
 
-const TASK_FILTERS = [
-  { id: "all", label: "Todas" },
-  { id: "in_progress", label: "En curso" },
-  { id: "pending", label: "Pendientes" },
-  { id: "done", label: "Hechas" },
-  { id: "failed", label: "Fallidas" },
-] as const
-type TaskFilter = (typeof TASK_FILTERS)[number]["id"]
 
 // A project session that backs one of the team's agents (created at "Iniciar equipo").
 export type SessionActivity = { id: string; title: string; updated: number }
@@ -95,10 +87,15 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
   const [selectedAgentId, setSelectedAgentId] = createSignal("")
   const [message, setMessage] = createSignal("")
   const [sending, setSending] = createSignal(false)
+  // After the debate ends, the user chooses: "choose" shows agree/adjust; "work"
+  // and "adjust" both open the team chat (the difference is just the entry point).
+  const [commsMode, setCommsMode] = createSignal<"choose" | "adjust" | "work">("choose")
+  // Who the chat message is addressed to — only that agent answers. Defaults to
+  // the coordinator (resolved lazily, since `team()` isn't defined yet here).
+  const [chatTarget, setChatTarget] = createSignal("")
   const [createdSessions, setCreatedSessions] = createSignal<Record<string, string>>({})
   // Live stream of the running claude agent (tool uses, retries, result).
   const [liveFeed, setLiveFeed] = createSignal<{ label: string; text: string; time: number }[]>([])
-  const [taskFilter, setTaskFilter] = createSignal<TaskFilter>("all")
   // When opened from the generic "Equipo" entry (no directory), the user first
   // picks a project from the list; that choice lives here. The team we show is
   // the directory passed in, or the picked one.
@@ -142,6 +139,11 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
     const dir = effectiveDir()
     return dir ? Teams.get(dir) : undefined
   })
+  // The coordinator is who the user talks to by default (there is always one in a
+  // 2+ agent team); falls back to the first agent.
+  const coordinatorId = createMemo(
+    () => team()?.agents.find((a) => a.role === "coordinator")?.accountId ?? team()?.agents[0]?.accountId ?? "",
+  )
   const connectedIds = createMemo(() => new Set(providers.connected().map((p) => p.id)))
 
   const activity = createMemo(() => [...(props.sessions?.() ?? [])].sort((a, b) => b.updated - a.updated))
@@ -238,19 +240,23 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
   // Hide CHAI's internal instruction prompts for the role discussion — only the
   // agents' own messages should show, so the conversation reads naturally.
   const visibleComms = createMemo(() =>
-    comms().filter((m) => !(m.type === "pregunta" && Boolean((m.data as Record<string, unknown> | undefined)?.discussion))),
+    comms().filter((m) => {
+      const data = m.data as Record<string, unknown> | undefined
+      // Hide CHAI's internal prompts: the role-debate questions and the post-delegation
+      // wrap-up re-prompt. Their replies still show.
+      return !(m.type === "pregunta" && (Boolean(data?.discussion) || Boolean(data?.internal)))
+    }),
   )
   const runtimeStates = createMemo(() => runtime()?.agentStates() ?? {})
-  const tasks = createMemo(() => runtime()?.tasks() ?? [])
   const runState = createMemo(() => runtime()?.runState() ?? "idle")
   const teamProfile = createMemo(() => runtime()?.teamProfile())
+  // Each freshly settled debate brings the user back to the agree/adjust choice.
+  createEffect(() => {
+    teamProfile()?.generatedAt
+    setCommsMode("choose")
+  })
   const synthesis = createMemo(() => runtime()?.synthesis())
   const permissionRequests = createMemo(() => runtime()?.permissionRequests() ?? [])
-  const filteredTasks = createMemo(() => {
-    const filter = taskFilter()
-    const all = [...tasks()].reverse()
-    return filter === "all" ? all : all.filter((task) => task.status === filter)
-  })
 
   function agentLabel(accountId?: string) {
     if (!accountId) return "Sin asignar"
@@ -316,6 +322,8 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
         if (a.type === "final_result" && summary) lines.push("✔️ " + summary)
         else if (a.type === "complete_task") lines.push("✔️ Tarea terminada" + (summary ? ": " + summary : ""))
         else if (a.type === "delegate" && typeof a.instructions === "string") lines.push("🤝 Delego: " + a.instructions)
+        else if (a.type === "set_role" && typeof a.role === "string")
+          lines.push("🔄 Rol: " + (typeof a.toAgent === "string" ? a.toAgent + " → " : "") + roleLabel(a.role))
         else if (a.type === "request_permission" && typeof a.permission === "string")
           lines.push("🔐 Pido permiso: " + a.permission + (reason ? " (" + reason + ")" : ""))
         else if (a.type === "report_block") lines.push("🚧 Bloqueado: " + reason)
@@ -351,6 +359,10 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
         body: detail ? `No pudo responder: ${detail}${hint}` : "No pudo responder (revisa su conexión o inicio de sesión).",
       }
     }
+    // A clean human-facing version set by the runtime (e.g. the user's own text, or
+    // an agent's delegation ask) — shown instead of the wrapped prompt we delivered.
+    const display = (item.data as Record<string, unknown> | undefined)?.display
+    if (typeof display === "string" && display.trim()) return { speaker, kind, body: display.trim() }
     if (item.data?.onboarding && (item.from === "coordinator" || item.from === "user")) {
       return { speaker: "CHAI", kind: "chai", body: "Preséntate: ¿cuáles son tus fortalezas, tus límites y qué rol te queda mejor?" }
     }
@@ -412,6 +424,36 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
     } catch (err) {
       showToast({
         title: "No se pudo enviar al equipo",
+        description: err instanceof Error ? err.message : String(err),
+      })
+    } finally {
+      setSending(false)
+    }
+  }
+
+  // The chat box only appears once the debate has settled. The message goes to the
+  // single agent picked in the recipient selector (the coordinator by default), so
+  // only that agent answers — addressed back to the user ("→ Tú"). It shows in the
+  // shared feed, so the rest of the team sees it too.
+  async function sendComms() {
+    const text = message().trim()
+    if (!text || sending()) return
+    const currentTeam = team()
+    if (!currentTeam) return
+    const targetId = chatTarget() || coordinatorId()
+    const target = currentTeam.agents.find((agent) => agent.accountId === targetId)
+    if (!target) return
+    if (isCliProvider(target.provider) && !platform.runClaudeAgent) {
+      showToast({ title: "El runner de CLI (Claude/Kimi) requiere la app de escritorio." })
+      return
+    }
+    setSending(true)
+    try {
+      await runtime()?.sendToAgent(target.accountId, text)
+      setMessage("")
+    } catch (err) {
+      showToast({
+        title: "No se pudo enviar el mensaje",
         description: err instanceof Error ? err.message : String(err),
       })
     } finally {
@@ -807,6 +849,106 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                     </div>
                   </div>
 
+                  {/* Once the debate has settled (idle + a profile): agree and start
+                      working, or talk to the team. Nothing shows while they're still
+                      debating, so the user doesn't cut in. */}
+                  <Show when={runState() === "idle" && Boolean(teamProfile())}>
+                    <Show when={commsMode() === "choose"}>
+                      <div class="flex flex-col gap-2 rounded-md border border-border-weak-base p-3">
+                        <span class="text-12-regular text-text-strong">
+                          ¿Estás de acuerdo con el reparto de roles?
+                        </span>
+                        <div class="flex flex-wrap items-center gap-1.5">
+                          <Button
+                            type="button"
+                            variant="primary"
+                            size="small"
+                            onClick={() => {
+                              setMessage("")
+                              setChatTarget(coordinatorId())
+                              setCommsMode("work")
+                            }}
+                          >
+                            Sí, empezar a trabajar
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="small"
+                            onClick={() => {
+                              setMessage("")
+                              setChatTarget(coordinatorId())
+                              setCommsMode("adjust")
+                            }}
+                          >
+                            No, hablar con el equipo
+                          </Button>
+                        </div>
+                      </div>
+                    </Show>
+
+                    <Show when={commsMode() === "work" || commsMode() === "adjust"}>
+                      <div class="flex flex-col gap-1.5">
+                        <div class="flex items-center justify-between gap-2">
+                          <div class="flex items-center gap-1.5">
+                            <span class="text-11-medium text-text-weak">Para:</span>
+                            <select
+                              class="rounded border border-border-weak-base bg-transparent px-1.5 py-1 text-11-regular text-text-strong outline-none"
+                              value={chatTarget() || coordinatorId()}
+                              onChange={(event) => setChatTarget(event.currentTarget.value)}
+                            >
+                              <For each={team()?.agents ?? []}>
+                                {(agent) => (
+                                  <option value={agent.accountId}>
+                                    {agent.account} · {roleLabel(agent.role)}
+                                    {agent.accountId === coordinatorId() ? " (coordinador)" : ""}
+                                  </option>
+                                )}
+                              </For>
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            class="text-10-medium text-text-weak hover:text-text-strong"
+                            onClick={() => {
+                              setMessage("")
+                              setCommsMode("choose")
+                            }}
+                          >
+                            ← Volver
+                          </button>
+                        </div>
+                        <textarea
+                          class="min-h-16 resize-y rounded-md border border-border-weak-base bg-transparent px-3 py-2 text-12-regular text-text-strong outline-none focus:border-border-strong"
+                          value={message()}
+                          onInput={(event) => setMessage(event.currentTarget.value)}
+                          onKeyDown={(event) => {
+                            // Enter sends (chat-style); Shift+Enter inserts a newline.
+                            if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+                              event.preventDefault()
+                              if (message().trim()) void sendComms()
+                            }
+                          }}
+                          placeholder="Escribe tu mensaje (solo responde el agente elegido)…"
+                        />
+                        <div class="flex items-center justify-between gap-2">
+                          <span class="text-10-regular text-text-weak">
+                            Solo responde el agente elegido; el resto lo ve en el chat. Enter envía.
+                          </span>
+                          <Button
+                            type="button"
+                            variant="primary"
+                            size="small"
+                            onClick={sendComms}
+                            disabled={sending() || !message().trim()}
+                          >
+                            {sending() ? "Enviando…" : "Enviar"}
+                          </Button>
+                        </div>
+                      </div>
+                    </Show>
+                  </Show>
+
                   {/* Pending permission approvals raised by agents */}
                   <Show when={permissionRequests().length > 0}>
                     <div class="flex flex-col gap-1.5">
@@ -868,80 +1010,6 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                         </div>
                       </div>
                     )}
-                  </Show>
-
-                  {/* Operational task board: filter, reassign, complete/reopen */}
-                  <Show when={tasks().length > 0}>
-                    <div class="flex flex-col gap-1.5">
-                      <div class="flex items-center justify-between gap-2">
-                        <span class="text-11-medium text-text-weak">Tablero de tareas</span>
-                        <div class="flex items-center gap-1">
-                          <For each={TASK_FILTERS}>
-                            {(filter) => (
-                              <button
-                                type="button"
-                                classList={{
-                                  "text-10-medium px-1.5 py-0.5 rounded": true,
-                                  "bg-surface-base-hover text-text-strong": taskFilter() === filter.id,
-                                  "text-text-weak hover:text-text-strong": taskFilter() !== filter.id,
-                                }}
-                                onClick={() => setTaskFilter(filter.id)}
-                              >
-                                {filter.label}
-                              </button>
-                            )}
-                          </For>
-                        </div>
-                      </div>
-                      <div class="flex max-h-48 flex-col gap-1 overflow-auto rounded-md border border-border-weak-base p-2">
-                        <For each={filteredTasks()}>
-                          {(task) => (
-                            <div class="flex flex-col gap-1.5 rounded border border-border-weak-base px-2 py-1.5">
-                              <div class="flex items-center justify-between gap-2">
-                                <span class="truncate text-12-regular text-text-strong">{task.title}</span>
-                                <span class="shrink-0 rounded bg-surface-base-hover px-1.5 py-0.5 text-10-medium text-text-weak">
-                                  {task.status}
-                                </span>
-                              </div>
-                              <div class="flex flex-wrap items-center gap-1.5">
-                                <select
-                                  class="rounded border border-border-weak-base bg-transparent px-1.5 py-0.5 text-10-regular text-text-weak"
-                                  value={task.assignedTo ?? ""}
-                                  onChange={(event) =>
-                                    runtime()?.reassignTask(task.id, event.currentTarget.value || undefined)
-                                  }
-                                >
-                                  <option value="">Sin asignar</option>
-                                  <For each={t().agents}>
-                                    {(agent) => <option value={agent.accountId}>{agentLabel(agent.accountId)}</option>}
-                                  </For>
-                                </select>
-                                <Show
-                                  when={task.status !== "done"}
-                                  fallback={
-                                    <button
-                                      type="button"
-                                      class="text-10-medium px-2 py-0.5 rounded border border-border-weak-base text-text-weak"
-                                      onClick={() => runtime()?.setTaskStatus(task.id, "in_progress")}
-                                    >
-                                      Reabrir
-                                    </button>
-                                  }
-                                >
-                                  <button
-                                    type="button"
-                                    class="text-10-medium px-2 py-0.5 rounded border border-border-weak-base text-icon-success-base"
-                                    onClick={() => runtime()?.setTaskStatus(task.id, "done")}
-                                  >
-                                    Completar
-                                  </button>
-                                </Show>
-                              </div>
-                            </div>
-                          )}
-                        </For>
-                      </div>
-                    </div>
                   </Show>
 
                 </div>

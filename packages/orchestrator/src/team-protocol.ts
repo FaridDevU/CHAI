@@ -66,6 +66,7 @@ export type TeamActionType =
   | "request_review"
   | "request_permission"
   | "delegate"
+  | "set_role"
   | "report_block"
   | "final_result"
 
@@ -75,6 +76,9 @@ export type TeamAction =
   | { type: "request_review"; target?: string; summary: string }
   | { type: "request_permission"; permission: Permission; reason?: string }
   | { type: "delegate"; toRole?: Role; toAgent?: string; instructions: string }
+  // The team agreed an agent should take a role; toAgent (name/id) defaults to the
+  // agent emitting it. CHAI applies it for real, keeping roles distinct.
+  | { type: "set_role"; toAgent?: string; role: Role }
   | { type: "report_block"; reason: string; needs?: string }
   | { type: "final_result"; summary: string; filesTouched?: string[]; tests?: string[]; nextActions?: string[] }
 
@@ -221,6 +225,11 @@ function parseAction(value: unknown): TeamAction | undefined {
       if (!instructions) return undefined
       return { type: "delegate", toRole: asRole(obj.toRole), toAgent: asString(obj.toAgent), instructions }
     }
+    case "set_role": {
+      const role = asRole(obj.role) ?? asRole(obj.toRole)
+      if (!role || role === "auto") return undefined
+      return { type: "set_role", toAgent: asString(obj.toAgent), role }
+    }
     case "report_block": {
       const reason = asString(obj.reason)
       if (!reason) return undefined
@@ -290,6 +299,7 @@ export function teamProtocolInstructions(): string {
     '  "actions": [',
     '    { "type": "complete_task", "summary": "que se completo" },',
     '    { "type": "delegate", "toRole": "tester", "instructions": "que debe hacer" },',
+    '    { "type": "set_role", "toAgent": "Codex", "role": "coordinator" },',
     '    { "type": "request_permission", "permission": "run_commands", "reason": "por que" },',
     '    { "type": "report_block", "reason": "que te bloquea", "needs": "que necesitas" },',
     '    { "type": "final_result", "summary": "resultado", "filesTouched": [], "tests": [], "nextActions": [] }',

@@ -202,3 +202,97 @@ describe("team runtime: there is always a coordinator", () => {
     expect(roles).toContain("coordinator")
   })
 })
+
+describe("team runtime: agents can message each other in the chat", () => {
+  test("an agent delegates to a teammate by name and wraps up for the user", async () => {
+    const fs = memFs()
+    const agents: TeamAgent[] = [
+      { accountId: "codex", provider: "codex", account: "Codex", role: "coordinator", permissions: ["read_project"] },
+      { accountId: "kimi", provider: "kimi", account: "Kimi", role: "frontend", permissions: ["read_project"] },
+    ]
+    const config: TeamConfig = {
+      projectName: "Deleg",
+      directory: "/proj/deleg",
+      stack: "ts",
+      agents,
+      roleMode: "manual",
+      visualTesting: false,
+      computerControl: "off",
+    }
+
+    const run = async (_runId: string, spec: ClaudeAgentSpec): Promise<ClaudeRunResult> => {
+      if (spec.prompt.includes("te habla a TI")) {
+        // Codex's chat turn: it hands the UI question to Kimi by name.
+        return {
+          text: JSON.stringify({
+            text: "Le pregunto a Kimi, que lleva el frontend.",
+            actions: [{ type: "delegate", toAgent: "Kimi", instructions: "¿Puedes encargarte de la UI?" }],
+          }),
+          isError: false,
+          exitCode: 0,
+        }
+      }
+      if (spec.prompt.includes("te delega esta tarea")) {
+        return { text: JSON.stringify({ text: "Sí, yo me encargo de la UI.", actions: [] }), isError: false, exitCode: 0 }
+      }
+      if (spec.prompt.includes("Consultaste a tus compañeros")) {
+        return { text: "Listo: Kimi se encarga de la UI.", isError: false, exitCode: 0 }
+      }
+      return { text: JSON.stringify({ text: "ok", actions: [] }), isError: false, exitCode: 0 }
+    }
+
+    const rt = new ProjectTeamRuntime(config, deps(fs, { runClaudeAgent: run }))
+    await rt.ready
+    await rt.sendToAgent("codex", "¿quién hace la UI?")
+
+    const msgs = rt.messages()
+    // Codex asked Kimi (agent-to-agent), and Kimi answered Codex — not the user.
+    expect(msgs.some((m) => m.from === "codex" && m.to === "kimi")).toBe(true)
+    expect(msgs.some((m) => m.from === "kimi" && m.to === "codex" && m.text.includes("me encargo"))).toBe(true)
+    // Codex still gives the user a final answer.
+    expect(msgs.some((m) => m.from === "codex" && m.to === "user")).toBe(true)
+  })
+
+  test("a role change agreed in the chat is applied and persisted, keeping a coordinator", async () => {
+    const fs = memFs()
+    const agents: TeamAgent[] = [
+      { accountId: "codex", provider: "codex", account: "Codex", role: "coordinator", permissions: ["read_project"] },
+      { accountId: "kimi", provider: "kimi", account: "Kimi", role: "frontend", permissions: ["read_project"] },
+    ]
+    const config: TeamConfig = {
+      projectName: "Roles",
+      directory: "/proj/roles",
+      stack: "ts",
+      agents,
+      roleMode: "manual",
+      visualTesting: false,
+      computerControl: "off",
+    }
+
+    const run = async (_runId: string, spec: ClaudeAgentSpec): Promise<ClaudeRunResult> => {
+      if (spec.prompt.includes("te habla a TI")) {
+        return {
+          text: JSON.stringify({
+            text: "De acuerdo, que Kimi coordine.",
+            actions: [{ type: "set_role", toAgent: "Kimi", role: "coordinator" }],
+          }),
+          isError: false,
+          exitCode: 0,
+        }
+      }
+      return { text: JSON.stringify({ text: "ok", actions: [] }), isError: false, exitCode: 0 }
+    }
+
+    const rt = new ProjectTeamRuntime(config, deps(fs, { runClaudeAgent: run }))
+    await rt.ready
+    await rt.sendToAgent("codex", "¿seguro que tú coordinas? confírmalo con Kimi")
+    await rt.flushPersistence()
+
+    const team = JSON.parse(fs.get(config.directory, ".chai/team.json") ?? "{}") as TeamConfig
+    const roleOf = (id: string) => team.agents.find((a) => a.accountId === id)?.role
+    // Kimi took coordinator; Codex swapped into Kimi's old role. Exactly one coordinator.
+    expect(roleOf("kimi")).toBe("coordinator")
+    expect(roleOf("codex")).toBe("frontend")
+    expect(team.agents.filter((a) => a.role === "coordinator")).toHaveLength(1)
+  })
+})

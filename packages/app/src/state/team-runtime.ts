@@ -474,15 +474,38 @@ export class ProjectTeamRuntime {
     this.assertCanRun()
     this.cancelled = false
     this.setRunState("running")
+    const agent = this.team.agents.find((a) => a.accountId === accountId)
     const task = this.createTask(`Mensaje directo a ${this.agentLabel(accountId)}`, accountId)
     this.setAgentState(accountId, "working")
     try {
-      const result = await this.dispatchWithPolicy(accountId, text, { from: "user", type: "pregunta" })
+      // Deliver the wrapped chat prompt (identity + delegate option + protocol) to
+      // the CLI, but show only the user's own text in the feed via data.display.
+      const result = await this.dispatchWithPolicy(accountId, agent ? this.chatInstructions(agent, text) : text, {
+        from: "user",
+        type: "pregunta",
+        data: { display: text },
+      })
       const ok = result?.type !== "error"
-      this.finishTask(task.id, ok ? "done" : "failed")
       this.setAgentState(accountId, ok ? "ready" : result?.data?.timeout ? "timeout" : "error")
       const envelope = result ? parseTeamEnvelope(result.text) : undefined
-      if (envelope) this.applyActions(this.team.agents.find((a) => a.accountId === accountId), envelope, text)
+      if (envelope) this.applyActions(agent, envelope, text)
+      // Autonomous agent-to-agent: if the agent asked to delegate, run those hand-offs
+      // (bounded depth) and then let the originator wrap up for the user with what the
+      // teammates said.
+      if (agent && envelope) {
+        const delegated = await this.runDelegations(agent, envelope, text, 0)
+        if (delegated.length) {
+          const summary = delegated.map((d) => `${d.agent.account} (${roleLabel(d.agent.role)}): ${d.text}`).join("\n\n")
+          this.setAgentState(accountId, "working")
+          const wrap = await this.dispatchWithPolicy(accountId, this.afterDelegationInstructions(text, summary), {
+            from: "user",
+            type: "pregunta",
+            data: { internal: true },
+          })
+          this.setAgentState(accountId, wrap?.type !== "error" ? "ready" : "error")
+        }
+      }
+      this.finishTask(task.id, ok ? "done" : "failed")
       this.syncMessages()
       return result
     } catch (err) {
@@ -492,6 +515,56 @@ export class ProjectTeamRuntime {
     } finally {
       if (this.runState() !== "cancelling") this.setRunState("idle")
     }
+  }
+
+  /** How deep agent→agent hand-offs may chain before CHAI stops (anti-loop). */
+  private static readonly MAX_DELEGATION_DEPTH = 2
+
+  /** Resolve a delegate target by accountId, account NAME (agents refer to each
+   *  other by name in chat), or role — excluding the agent that delegated. */
+  private resolveDelegateTarget(delegation: { toAgent?: string; toRole?: Role }, excludeId: string): TeamAgent | undefined {
+    const wanted = delegation.toAgent?.trim().toLowerCase()
+    const byName = wanted
+      ? this.team.agents.find((a) => a.accountId.toLowerCase() === wanted || a.account.toLowerCase() === wanted)
+      : undefined
+    const target = byName ?? this.agentForRole(delegation.toRole)
+    return target && target.accountId !== excludeId ? target : undefined
+  }
+
+  /**
+   * Execute the `delegate` actions an agent asked for: dispatch the instructions
+   * to each teammate (shown in the feed as "target → originator"), recursing up to
+   * MAX_DELEGATION_DEPTH so a teammate can ask another in turn, then return every
+   * reply collected so the originator can answer the user with them.
+   */
+  private async runDelegations(
+    originator: TeamAgent,
+    envelope: TeamEnvelope,
+    request: string,
+    depth: number,
+  ): Promise<{ agent: TeamAgent; text: string }[]> {
+    if (depth >= ProjectTeamRuntime.MAX_DELEGATION_DEPTH) return []
+    const out: { agent: TeamAgent; text: string }[] = []
+    const delegations = envelope.actions.filter((a): a is Extract<TeamAction, { type: "delegate" }> => a.type === "delegate")
+    for (const delegation of delegations) {
+      const target = this.resolveDelegateTarget(delegation, originator.accountId)
+      if (!target) continue
+      this.assertNotCancelled()
+      await this.waitIfPaused()
+      this.setAgentState(target.accountId, "working")
+      const reply = await this.dispatchWithPolicy(target.accountId, this.delegationInstructions(originator, delegation.instructions, request), {
+        from: originator.accountId,
+        type: "pregunta",
+        data: { delegated: true, originalUserRequest: request, display: delegation.instructions },
+      })
+      const ok = reply?.type !== "error"
+      this.setAgentState(target.accountId, ok ? "ready" : reply?.data?.timeout ? "timeout" : "error")
+      const env = reply ? parseTeamEnvelope(reply.text) : undefined
+      if (env) this.applyActions(target, env, request)
+      out.push({ agent: target, text: reply?.text?.trim() || "(sin respuesta)" })
+      if (env) out.push(...(await this.runDelegations(target, env, request, depth + 1)))
+    }
+    return out
   }
 
   /**
@@ -655,6 +728,16 @@ export class ProjectTeamRuntime {
           if (!agent) break
           if (this.effectivePermissions(agent.accountId).includes(action.permission)) break
           this.queuePermissionRequest(agent.accountId, action.permission, action.reason)
+          break
+        }
+        case "set_role": {
+          // The team agreed a role change — apply it for real. toAgent (name/id)
+          // defaults to the agent that emitted the action.
+          const wanted = action.toAgent?.trim().toLowerCase()
+          const targetAgent = wanted
+            ? this.team.agents.find((a) => a.accountId.toLowerCase() === wanted || a.account.toLowerCase() === wanted)
+            : agent
+          if (targetAgent) this.setAgentRole(targetAgent.accountId, action.role)
           break
         }
         // create_task/delegate/report_block/final_result/request_review either
@@ -872,6 +955,43 @@ export class ProjectTeamRuntime {
       instructions,
       "",
       teamProtocolInstructions(),
+    ].join("\n")
+  }
+
+  /** Prompt for a direct user→agent chat turn: identity, teammates, and the option
+   *  to hand off to a teammate BY NAME via a `delegate` action when it truly helps. */
+  private chatInstructions(agent: TeamAgent, text: string) {
+    const mates = this.team.agents.filter((a) => a.accountId !== agent.accountId)
+    const mateList = mates.map((a) => `${a.account} (${roleLabel(a.role)})`).join(", ")
+    return [
+      `Eres ${agent.account}, rol ${roleLabel(agent.role)}, en el chat del equipo CHAI. El usuario te habla a TI directamente.`,
+      mateList ? `Tus compañeros de equipo: ${mateList}.` : "",
+      mateList
+        ? `Si de verdad ayuda, PUEDES pedirle algo a un compañero por su nombre con una acción "delegate" (pon su nombre en "toAgent", p. ej. "${mates[0]!.account}"). Solo delega si aporta; si puedes responder tú, deja actions vacío.`
+        : "",
+      mateList
+        ? `Si tú y tus compañeros ACUERDAN cambiar de rol, confírmalo con una acción "set_role" ("toAgent" con el nombre y "role" con el rol nuevo); CHAI lo aplica de verdad. No cambies roles sin acuerdo.`
+        : "",
+      "",
+      `Mensaje del usuario: ${text}`,
+      "",
+      `Responde en "text" al usuario, en español, natural y al grano.`,
+      teamProtocolInstructions(),
+    ]
+      .filter(Boolean)
+      .join("\n")
+  }
+
+  /** After an agent's teammates answered its delegations, ask it to give the user a
+   *  final, plain answer that folds in what they said (no further delegation/JSON). */
+  private afterDelegationInstructions(request: string, summary: string) {
+    return [
+      `El usuario te pidió: ${request}`,
+      `Consultaste a tus compañeros y respondieron:`,
+      "",
+      summary,
+      "",
+      `Ahora dale al usuario tu respuesta final en español, natural, integrando lo que dijeron. Sin JSON.`,
     ].join("\n")
   }
 
@@ -1317,6 +1437,52 @@ export class ProjectTeamRuntime {
     void this.persistTeam()
     this.deps.onTeamUpdated?.(this.team)
     this.rebuildOrchestrator()
+  }
+
+  /**
+   * Apply a real role change agreed in the chat (the `set_role` action). Keeps
+   * roles distinct by swapping with whoever currently holds the new role, and
+   * keeps a coordinator in a 2+ team. Persists to .chai/team.json, updates the
+   * reactive team store + saved profile, and announces it in the feed.
+   */
+  setAgentRole(accountId: string, role: Role): boolean {
+    if (role === "auto") return false
+    const target = this.team.agents.find((a) => a.accountId === accountId)
+    if (!target || target.role === role) return false
+    const oldRole = target.role
+    // Swap: whoever held the new role takes the target's old role, so no two share.
+    let agents = this.team.agents.map((a) =>
+      a.accountId === accountId ? { ...a, role } : a.role === role ? { ...a, role: oldRole } : a,
+    )
+    // The swap usually preserves the coordinator; this covers taking a role nobody held.
+    if (agents.length >= 2 && !agents.some((a) => a.role === "coordinator")) {
+      const pick = agents.find((a) => a.accountId !== accountId) ?? agents[0]
+      if (pick) agents = agents.map((a) => (a.accountId === pick.accountId ? { ...a, role: "coordinator" } : a))
+    }
+    this.team = { ...this.team, agents }
+    void this.persistTeam()
+    this.deps.onTeamUpdated?.(this.team)
+    this.rebuildOrchestrator()
+    // Keep the saved profile's roles in sync so the "así quedaron los roles" line matches.
+    if (this.teamProfileValue) {
+      this.teamProfileValue = {
+        ...this.teamProfileValue,
+        agents: this.teamProfileValue.agents.map((p) => {
+          const a = agents.find((x) => x.accountId === p.accountId)
+          return a ? { ...p, recommendedRole: a.role } : p
+        }),
+      }
+      this.setTeamProfile(this.teamProfileValue)
+      void this.persistTeamProfile()
+    }
+    this.orchestrator.router.send({
+      from: COORDINATOR,
+      to: "user",
+      type: "info",
+      text: `Rol actualizado: ${target.account} ahora es ${roleLabel(role)}.`,
+    })
+    this.syncMessages()
+    return true
   }
 
   private persistTeam() {
