@@ -431,11 +431,16 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
     }
   }
 
-  // The chat box only appears once the debate has settled. The message goes to the
-  // single agent picked in the recipient selector (the coordinator by default), so
-  // only that agent answers — addressed back to the user ("→ Tú"). It shows in the
-  // shared feed, so the rest of the team sees it too.
+  // The chat box only appears once the debate has settled. In "work" mode the
+  // message goes to the coordinator, who plans and coordinates the whole team
+  // (sendToTeam). In "adjust" mode it goes to the single agent picked in the
+  // recipient selector, so only that agent answers ("→ Tú"); the rest see it in
+  // the shared feed.
   async function sendComms() {
+    if (commsMode() === "work") {
+      await sendToTeam()
+      return
+    }
     const text = message().trim()
     if (!text || sending()) return
     const currentTeam = team()
@@ -869,7 +874,7 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                               setCommsMode("work")
                             }}
                           >
-                            Sí, empezar a trabajar
+                            Empezar a trabajar ahora
                           </Button>
                           <Button
                             type="button"
@@ -890,23 +895,32 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                     <Show when={commsMode() === "work" || commsMode() === "adjust"}>
                       <div class="flex flex-col gap-1.5">
                         <div class="flex items-center justify-between gap-2">
-                          <div class="flex items-center gap-1.5">
-                            <span class="text-11-medium text-text-weak">Para:</span>
-                            <select
-                              class="rounded border border-border-weak-base bg-transparent px-1.5 py-1 text-11-regular text-text-strong outline-none"
-                              value={chatTarget() || coordinatorId()}
-                              onChange={(event) => setChatTarget(event.currentTarget.value)}
-                            >
-                              <For each={team()?.agents ?? []}>
-                                {(agent) => (
-                                  <option value={agent.accountId}>
-                                    {agent.account} · {roleLabel(agent.role)}
-                                    {agent.accountId === coordinatorId() ? " (coordinador)" : ""}
-                                  </option>
-                                )}
-                              </For>
-                            </select>
-                          </div>
+                          <Show
+                            when={commsMode() === "adjust"}
+                            fallback={
+                              <span class="text-11-medium text-text-weak">
+                                Trabajando con {agentLabel(coordinatorId())} — coordina al equipo
+                              </span>
+                            }
+                          >
+                            <div class="flex items-center gap-1.5">
+                              <span class="text-11-medium text-text-weak">Para:</span>
+                              <select
+                                class="rounded border border-border-weak-base bg-transparent px-1.5 py-1 text-11-regular text-text-strong outline-none"
+                                value={chatTarget() || coordinatorId()}
+                                onChange={(event) => setChatTarget(event.currentTarget.value)}
+                              >
+                                <For each={team()?.agents ?? []}>
+                                  {(agent) => (
+                                    <option value={agent.accountId}>
+                                      {agent.account} · {roleLabel(agent.role)}
+                                      {agent.accountId === coordinatorId() ? " (coordinador)" : ""}
+                                    </option>
+                                  )}
+                                </For>
+                              </select>
+                            </div>
+                          </Show>
                           <button
                             type="button"
                             class="text-10-medium text-text-weak hover:text-text-strong"
@@ -929,11 +943,17 @@ export function DialogTeam(props: { directory?: string; sessions?: () => Session
                               if (message().trim()) void sendComms()
                             }
                           }}
-                          placeholder="Escribe tu mensaje (solo responde el agente elegido)…"
+                          placeholder={
+                            commsMode() === "work"
+                              ? "Dile al coordinador qué quieres construir…"
+                              : "Escribe tu mensaje (solo responde el agente elegido)…"
+                          }
                         />
                         <div class="flex items-center justify-between gap-2">
                           <span class="text-10-regular text-text-weak">
-                            Solo responde el agente elegido; el resto lo ve en el chat. Enter envía.
+                            {commsMode() === "work"
+                              ? "El coordinador planifica y reparte el trabajo al equipo. Enter envía."
+                              : "Solo responde el agente elegido; el resto lo ve en el chat. Enter envía."}
                           </span>
                           <Button
                             type="button"
